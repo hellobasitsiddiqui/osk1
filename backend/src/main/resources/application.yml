@@ -6,6 +6,19 @@
 spring:
   application:
     name: backend
+  # --- Persistence / JPA (OSK-32) ----------------------------------------------
+  # Flyway owns the schema (it is auto-enabled by Boot and runs its db/migration
+  # scripts on startup). Hibernate is therefore locked to `validate`: it never
+  # creates or alters tables, it only asserts the entity mappings match the
+  # Flyway-built schema and fails fast on drift. With no entities yet this check
+  # passes trivially, but it is on from day one so the guard is never retrofitted.
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    # Close the persistence context at the end of the service call, not the view
+    # render. open-in-view is an anti-pattern (hidden lazy-loading queries during
+    # serialization); disable it explicitly rather than rely on the noisy default.
+    open-in-view: false
 server:
   # Honour the platform-provided port (Cloud Run sets $PORT); 8080 locally.
   port: ${PORT:8080}
