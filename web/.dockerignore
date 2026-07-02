@@ -1,0 +1,6 @@
+# .dockerignore — keeps non-asset files out of the Docker build context.
+# The image only needs index.html and nginx.conf (both COPY'd explicitly); the
+# Dockerfile, README and this file must not end up in the served web root.
+Dockerfile
+.dockerignore
+README.md
