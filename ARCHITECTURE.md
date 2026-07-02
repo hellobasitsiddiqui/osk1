@@ -126,3 +126,43 @@ exists in git or CI secrets**. From there CI builds and pushes the backend image
 to **Artifact Registry** (Cloud Run pulls and rolls out a new revision) and
 publishes the static web build to **Firebase Hosting** (atomic deploy, instant
 rollback). See [ADR-0002](docs/adr/0002-hosting-cloud-run-firebase.md).
+
+## API versioning convention
+
+All **application** endpoints are served under a `/api/v1` path prefix. The
+prefix is applied in one place — `ApiVersioningConfig` (a `WebMvcConfigurer` in
+`io.openskeleton.backend.api`) uses `configurePathMatch` to add `/api/v1` to
+every controller whose class lives in the `io.openskeleton.backend.api` package
+(via `HandlerTypePredicate.forBasePackage`). Controllers therefore declare
+version-agnostic mappings (e.g. `@GetMapping("/info")` → served at
+`/api/v1/info`); the version lives in exactly one file, never copy-pasted onto
+each mapping.
+
+**What is intentionally NOT versioned** (and why): the prefix is scoped to the
+`api` base package, so infrastructure/operational endpoints keep stable,
+unversioned paths — they are consumed by tooling, not by API clients:
+
+- `/health` — the deploy liveness probe (Docker/Cloud Run curl this; it lives in
+  the `health` package, outside `api`).
+- `/actuator/**` — Actuator management endpoints.
+- `/v3/api-docs`, `/swagger-ui/**` — springdoc/OpenAPI documentation.
+
+**Adding a new v1 endpoint:** drop a `@RestController` into
+`io.openskeleton.backend.api` (or a sub-package) with a version-agnostic
+mapping. It inherits the `/api/v1` prefix automatically — no other change needed.
+
+**Introducing `/api/v2` (additively, without breaking v1):** versioning here is
+*additive*, never in-place mutation. When a breaking change is required:
+
+1. Create a new sub-package `io.openskeleton.backend.api.v2` for the changed
+   controllers (leave the existing v1 controllers untouched so current clients
+   keep working).
+2. In `ApiVersioningConfig`, add a second prefix mapping for that package —
+   `configurer.addPathPrefix("/api/v2", HandlerTypePredicate.forBasePackage(
+   "io.openskeleton.backend.api.v2"))` — and narrow the existing v1 predicate so
+   v1 no longer matches the v2 sub-package (e.g. keep v1 controllers in an
+   explicit `...api.v1` package, or exclude v2 from the v1 predicate). Both
+   versions are then served side by side.
+3. Deprecate v1 on its own timeline (document a sunset date); remove the v1
+   package only once clients have migrated. Non-breaking additions (new fields,
+   new endpoints) stay in v1 — bump the version only for breaking changes.
