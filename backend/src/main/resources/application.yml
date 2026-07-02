@@ -39,6 +39,17 @@ app:
     capacity: ${APP_RATE_LIMIT_CAPACITY:100}
     refill-tokens: ${APP_RATE_LIMIT_REFILL_TOKENS:100}
     refill-period: ${APP_RATE_LIMIT_REFILL_PERIOD:1m}
+  # --- List pagination / sorting (OSK-87) --------------------------------------
+  # Shared convention for list endpoints, bound via PaginationProperties
+  # (app.pagination.*). `size` is hard-capped at max-page-size so no request can pull
+  # an unbounded result set; a param-less request gets default-page-size rows in a
+  # deterministic default sort (unstable paging otherwise duplicates/skips rows).
+  # See ARCHITECTURE.md -> "List conventions (pagination / sorting / filtering)".
+  pagination:
+    max-page-size: ${APP_PAGINATION_MAX_PAGE_SIZE:100}
+    default-page-size: ${APP_PAGINATION_DEFAULT_PAGE_SIZE:20}
+    default-sort-property: ${APP_PAGINATION_DEFAULT_SORT_PROPERTY:id}
+    default-sort-direction: ${APP_PAGINATION_DEFAULT_SORT_DIRECTION:ASC}
 
 # --- Actuator (ops surface, OSK-50) --------------------------------------------
 # Expose only health/info/metrics over HTTP. health is public (liveness/readiness

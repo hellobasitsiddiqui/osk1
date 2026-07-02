@@ -166,3 +166,57 @@ mapping. It inherits the `/api/v1` prefix automatically — no other change need
 3. Deprecate v1 on its own timeline (document a sunset date); remove the v1
    package only once clients have migrated. Non-breaking additions (new fields,
    new endpoints) stay in v1 — bump the version only for breaking changes.
+
+## List conventions (pagination / sorting / filtering)
+
+Every endpoint that returns a **list** follows one convention so clients learn it
+once. The reusable machinery lives in `io.openskeleton.backend.common` (OSK-87);
+a controller opts in simply by accepting a Spring Data `Pageable` and returning a
+`PagedResponse<T>`. (The admin user list, OSK-71, is the first intended adopter;
+the convention below ships ahead of it.)
+
+**Query parameters** (Spring Data's standard names, so no custom parsing):
+
+- `page` — zero-based page index; `page=0` is the first page. Omitted ⇒ `0`.
+- `size` — items per page. Omitted ⇒ default (`20`). **Bounded**: any value above
+  the max (`100`) is silently **clamped** to the max — a caller cannot request an
+  unbounded result set.
+- `sort` — `property[,asc|desc]`, repeatable for multi-key sort
+  (e.g. `?sort=createdAt,desc&sort=id,asc`). Omitted ⇒ a **deterministic default
+  sort** (`id,asc`). A stable total order is mandatory: paging over an unsorted
+  query can show the same row twice or skip one.
+- **Filtering** — basic filtering is expressed as additional, explicitly
+  whitelisted query params (e.g. `?status=ACTIVE&q=alice`). Each adopter binds only
+  the fields it supports and translates them to a repository query / JPA
+  `Specification`; never pass raw client input through to a query. Unknown filter
+  params are ignored, not errored.
+
+**Response envelope** — list endpoints return `PagedResponse<T>` (never a raw
+Spring Data `Page`, whose JSON is verbose and version-unstable):
+
+```json
+{
+  "items": [ /* the T rows on this page */ ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 137,
+  "totalPages": 7
+}
+```
+
+Build it with the `PagedResponse.of(page)` factory from the `Page<T>` a repository
+returns.
+
+**How the bounds are enforced (one place, not per-controller):** `PageableConfig`
+registers a `PageableHandlerMethodArgumentResolverCustomizer` that calls
+`setMaxPageSize(100)` and `setFallbackPageable(...)` on Spring's
+`PageableHandlerMethodArgumentResolver`. So the `size` cap and the default
+page-size/sort apply to **every** `Pageable` argument automatically. The three
+knobs — `max-page-size`, `default-page-size`, `default-sort-*` — are bound from
+`app.pagination.*` (`PaginationProperties`) and env-overridable.
+
+**Adding a list endpoint:** accept a `Pageable`, run the query
+(`repository.findAll(pageable)` or a filtered `Specification`), and return
+`PagedResponse.of(page)`. The cap, defaults and sort parsing come for free; add
+`@PageableDefault` / `@SortDefault` on the parameter only if a specific endpoint
+wants a different *default* (the max-size cap still applies on top).
