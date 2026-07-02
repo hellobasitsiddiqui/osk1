@@ -1,0 +1,55 @@
+# dependency-review.yml — Dependency Review gate for OpenSkeleton (OSK-24).
+#
+# WHAT: On every pull request into main, diffs the dependency manifests/lockfiles
+#       changed by the PR (Maven pom.xml, Gradle, GitHub Actions, etc.) against
+#       the base branch and flags any newly-introduced dependency that carries a
+#       known vulnerability. Posts a summary comment on the PR.
+#
+# WHY:  This is the supply-chain half of the 1.3.4 security work: it stops a PR
+#       from *adding* a dependency with a known high/critical CVE. It complements
+#       CodeQL (which scans our own code) and Dependabot (which upgrades existing
+#       deps). fail-on-severity: high means the action reports (and would fail its
+#       own job on) High and Critical advisories, while lower-severity findings are
+#       surfaced without failing. It is ADVISORY — the check is NOT configured as a
+#       required status check, so a maintainer can still merge with justification.
+#
+# SECURITY: The action is pinned to a full commit SHA (not a moving tag); the
+#       trailing "# vX.Y.Z" comment records the human-readable version.
+
+name: Dependency Review
+
+on:
+  # Only meaningful on PRs: the action needs a base ref to diff the dependency
+  # graph against, which pull_request provides.
+  pull_request:
+    branches: [main]
+
+# Least-privilege permissions:
+#   - contents: read        -> read the dependency graph / check out the diff
+#   - pull-requests: write  -> post the dependency-review summary comment on the PR
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    steps:
+      # Check out the PR so the action can read the base and head dependency graphs.
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Compare base vs head dependency manifests and flag vulnerable additions.
+      # fail-on-severity: high => High and Critical advisories are reported;
+      # comment-summary-in-pr: on-failure posts a summary comment when issues are
+      # found (requires the pull-requests: write permission above).
+      - name: Dependency Review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure

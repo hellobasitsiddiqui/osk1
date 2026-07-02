@@ -1,0 +1,88 @@
+# codeql.yml — CodeQL static analysis (SAST) for the OpenSkeleton backend (OSK-24).
+#
+# WHAT: Runs GitHub's CodeQL engine over the Java backend (backend/) to find
+#       security vulnerabilities and quality issues, then uploads the results to
+#       the repository's Security > Code scanning tab. Runs on every pull request
+#       into main and on a weekly schedule.
+#
+# WHY:  This is the 1.3.4 SAST gate. PR runs catch newly-introduced issues before
+#       merge; the weekly cron re-scans main so vulnerabilities disclosed *after*
+#       code was merged (new CodeQL queries, newly-classified CVEs) still surface
+#       without a code change. It is ADVISORY on purpose — findings are visible in
+#       the Security tab but the check is NOT configured as a required status
+#       check, so it never blocks a merge on its own.
+#
+# LANGUAGE: The backend is Java 21 (backend/pom.xml, <java.version>21</java.version>).
+#       CodeQL analyses Java and Kotlin together under the single "java-kotlin"
+#       language pack. We set up Temurin JDK 21 and use build-mode: autobuild so
+#       CodeQL builds the Maven module itself to get an accurate code database.
+#
+# SECURITY: Every third-party action is pinned to a full commit SHA (never a
+#       moving tag) so a re-pointed tag cannot inject code into a job that holds
+#       security-events: write. The trailing "# vX.Y.Z" comment records the
+#       human-readable version each SHA resolves to. github/codeql-action/init and
+#       .../analyze intentionally share the SAME SHA — they ship from one repo/
+#       release and must stay in lockstep.
+
+name: CodeQL
+
+on:
+  # Analyse the code proposed by each PR before it lands on main.
+  pull_request:
+    branches: [main]
+  # Weekly re-scan of the default branch. Fixed day/time (Mondays 07:17 UTC);
+  # the odd minute avoids the top-of-hour scheduling stampede on GitHub's cron.
+  schedule:
+    - cron: '17 7 * * 1'
+
+# Least-privilege permissions for the whole workflow:
+#   - security-events: write  -> required to upload SARIF results to Code scanning
+#   - contents: read          -> required to check out the source
+#   - actions: read           -> lets CodeQL read workflow run metadata (needed
+#                                for private repos / some setups; harmless here)
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+# Supersede an in-flight scan for the same ref when a new commit arrives, so we
+# don't burn CI minutes analysing stale code. Each PR/branch gets its own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (java-kotlin)
+    runs-on: ubuntu-latest
+    steps:
+      # Check out the PR/branch source so CodeQL has code to build and analyse.
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Install Temurin JDK 21 (matches backend/pom.xml) so CodeQL's autobuild
+      # compiles the Maven module with the correct toolchain. Enable ~/.m2
+      # caching so repeat scans don't re-download every dependency.
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Initialise the CodeQL database for Java/Kotlin. build-mode: autobuild lets
+      # CodeQL detect the Maven project (backend/) and build it automatically to
+      # produce an accurate database; with build-mode set, the analyze step below
+      # performs the build — no separate autobuild step is needed.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
+        with:
+          languages: java-kotlin
+          build-mode: autobuild
+
+      # Run the CodeQL queries and upload results (SARIF) to the Security tab.
+      # NOTE: keep this SHA identical to the init SHA above — same action repo.
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
+        with:
+          category: '/language:java-kotlin'
