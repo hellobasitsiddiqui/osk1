@@ -1,0 +1,6 @@
+# test profile — automated tests. Isolated and ephemeral; a Testcontainers
+# Postgres is wired in OSK-29, so no real datasource is configured here and the
+# slice/unit tests stay fast and self-contained.
+app:
+  environment-name: test
+  public-base-url: http://localhost

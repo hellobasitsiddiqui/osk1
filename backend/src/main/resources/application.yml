@@ -1,0 +1,18 @@
+# Base application config shared by every profile. Only safe, non-secret defaults
+# live here; each profile YAML (application-{dev,test,prod}.yml) overrides what it
+# needs. 12-factor: values are env-overridable and the active profile is chosen
+# with SPRING_PROFILES_ACTIVE (no profile => these base defaults, good for a
+# zero-setup local run and for tests).
+spring:
+  application:
+    name: backend
+server:
+  # Honour the platform-provided port (Cloud Run sets $PORT); 8080 locally.
+  port: ${PORT:8080}
+
+# Strongly-typed app settings, bound + validated via AppProperties (app.*).
+# Base supplies local-safe defaults so the app boots with zero config; the prod
+# profile deliberately drops the defaults to force explicit, env-supplied values.
+app:
+  environment-name: local
+  public-base-url: http://localhost:8080
