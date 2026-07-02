@@ -109,4 +109,27 @@ Total merged so far (10): OSK-14, 31, 43, 12, 26, 37, 24, 34, 27, 39.
 
 ---
 
-_Living document — append a dated finding/lesson whenever the fleet teaches one; fold the durable ones out via docs PRs. **Every HITL intervention gets an H-entry above (H6).**_
+---
+
+## Round-1 close-out (2026-07-02, ~20:49 BST)
+
+**22 tickets built + merged** — the entire non-DB, non-GCP foundation: OSK-14, 31, 43, 26, 12, 37, 24, 34, 27, 39, 50, 57, 18, 23, 21, 45, 55, 16, 88, 49, 52, 22. Delivered via 3 dynamic parallel workflows (9 tickets) + solo serial (13). Every PR merged green; nothing half-built.
+
+**Frontier reached — remaining work is gated, not buildable-and-skipped:**
+- **OSK-32 (Flyway) + OSK-29 (Testcontainers) = one coupled DB change** (L7 below). Released OSK-32 to To Do rather than half-build it.
+- **OSK-17 (branch protection) = human/settings** — released to To Do with a paste-ready `gh api` command; can't self-apply (classifier + would block the fleet's own merges).
+- **~11 tickets GCP-walled** (OSK-13/15/19/20/25/28/30/40/42/47) behind **OSK-36 (create GCP project)** ← OSK-38/OSK-44 (human GCP account + billing, OSK-48). The agent cannot create a GCP project.
+- **OSK-203** (e2e smoke) needs the foundation deployed first.
+
+### F8 — a strict app-wide CSP also covers the Swagger UI (OSK-23 × OSK-57)
+`SecurityHeadersFilter`'s `Content-Security-Policy: default-src 'none'` is applied to every response, including `/swagger-ui`, so the UI won't render in a browser (MockMvc tests pass; prod disables swagger). Fix: exclude/relax CSP for `/swagger-ui/**` + `/v3/api-docs`. Small follow-up.
+
+### L7 — Adding a datasource couples every full-context test to a DB; pair the migration ticket with the test-harness ticket
+Wiring Flyway/JPA puts a `DataSource`/Hibernate on the classpath, so every `@SpringBootTest` needs a live DB at context load. The test DB is the Testcontainers harness — so the "migrations" ticket (OSK-32) and the "Testcontainers" ticket (OSK-29) must land together (or the migration ticket `is blocked by` the harness). The DAG had them in the opposite order. Don't split them.
+
+### H10 — Standing directive: keep grinding; don't self-checkpoint
+The human repeatedly corrected a tendency to pause for status/approval ("you're not supposed to stop", "why are you stopping"). **Run continuously through the ready frontier**, only surfacing at a *genuine* blocker (human-only step, or a change that would break the build). Report inline, keep moving. Each merged ticket is a safe stop boundary, so there is no need to pre-emptively checkpoint.
+
+---
+
+_Living document — append a dated finding/lesson whenever the fleet teaches one; fold the durable ones out via docs PRs. **Every HITL intervention gets an H-entry above (H6/H10).**_
