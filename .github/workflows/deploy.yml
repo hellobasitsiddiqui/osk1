@@ -129,9 +129,9 @@ jobs:
           echo "effective_sha=${EFFECTIVE_SHA}" >> "${GITHUB_OUTPUT}"
           echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
 
-      # Deploy by immutable DIGEST (not a tag) so the running image is provably the
-      # one we resolved. `gcloud run deploy` routes 100% traffic to the new revision by
-      # default (AC-H2) — we never pass --no-traffic; the verify step proves it moved.
+      # Deploy by immutable DIGEST (not a tag) so the running image is provably the one
+      # we resolved. Traffic is then explicitly routed to this revision by the next step
+      # (a preview --no-traffic deploy can pin the primary, so we must re-assert — AC-H2).
       # Secrets: DB_PASSWORD from Secret Manager (OSK-20, never in the repo).
       # /health startup + liveness probes: an unhealthy revision gets no traffic.
       - name: Deploy to Cloud Run
@@ -155,6 +155,22 @@ jobs:
             --format='value(status.latestCreatedRevisionName)')"
           echo "Created revision ${NEW_REV}"
           echo "new_rev=${NEW_REV}" >> "${GITHUB_OUTPUT}"
+
+      # Explicitly route 100% of traffic to THIS run's new revision, by name (AC-H2).
+      # Required because `gcloud run deploy` does NOT move traffic when the service's
+      # traffic is pinned to a specific revision — and a PR preview deploy (OSK-30,
+      # `gcloud run deploy --no-traffic --tag`) deliberately pins the primary to the
+      # then-current revision so the preview takes 0 traffic. Left unaddressed, a healthy
+      # new prod revision silently gets 0% traffic (the exact TM-131 stale-revision trap
+      # the verify step below catches). Pin by REVISION NAME (not --to-latest) so a newer
+      # *preview* revision can never be promoted to production.
+      - name: Route traffic to the new revision (AC-H2)
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "${SERVICE}" \
+            --project="${PROJECT_ID}" --region="${REGION}" \
+            --to-revisions="${{ steps.deploy.outputs.new_rev }}=100" \
+            --quiet
 
       # AC-H1 + AC-H2: do NOT trust /health. Assert the revision taking 100% traffic
       # IS the one this run created, and that its running image digest == the digest
