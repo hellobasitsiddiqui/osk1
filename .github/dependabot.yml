@@ -1,0 +1,66 @@
+# dependabot.yml — automated dependency update PRs for OpenSkeleton (OSK-24).
+#
+# WHAT: Tells GitHub Dependabot which package ecosystems to monitor and on what
+#       cadence to open update PRs. Covers the four dependency surfaces in this
+#       repo: the Maven backend, the GitHub Actions workflows, the backend's
+#       container base image, and the Android Gradle build.
+#
+# WHY:  Keeps dependencies patched without a human polling for CVEs — Dependabot
+#       watches upstream releases and raises a PR (which then runs the CI + the
+#       CodeQL/dependency-review gates from this same ticket) when an update is
+#       available. Weekly cadence keeps the noise manageable.
+#
+# MAJOR-VERSION POLICY: For maven and gradle we IGNORE semver-major bumps
+#       (update-types: version-update:semver-major). Majors carry breaking API
+#       changes and are done deliberately by a human; Dependabot handles the
+#       low-risk minor/patch stream automatically. github-actions and docker are
+#       left to receive all update types (majors there are usually low-risk pins
+#       we want to see promptly).
+#
+# NOTE: docker (/backend) and gradle (/android) are configured ahead of their
+#       manifests landing — Dependabot simply no-ops on an ecosystem until it
+#       finds a manifest (a Dockerfile / build.gradle), at which point updates
+#       start with zero further config changes.
+
+version: 2
+
+updates:
+  # --- Java backend (Maven) ---------------------------------------------------
+  # Watches backend/pom.xml. Minor/patch only — majors are done by hand.
+  - package-ecosystem: maven
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # --- GitHub Actions ---------------------------------------------------------
+  # Watches the SHAs/tags pinned in .github/workflows/*. Keeps our pinned actions
+  # current (Dependabot bumps the SHA and the trailing version comment together).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  # --- Backend container image (Docker) --------------------------------------
+  # Watches the FROM base image in backend/Dockerfile once it exists.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # --- Android app (Gradle) ---------------------------------------------------
+  # Watches android/ Gradle build files once they land. Minor/patch only —
+  # majors are done by hand.
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
