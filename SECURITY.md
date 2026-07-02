@@ -87,3 +87,35 @@ OIDC), and `.gitignore` blocks credential material (service-account keys, ADC
 JSON, `*.pem`, `*.p12`, env files). If you ever find a committed secret, treat it
 as a vulnerability and report it privately using the process above so it can be
 rotated and purged.
+
+Two automated layers guard this: **GitHub secret scanning + push protection**
+(enabled on the repo — push protection rejects a recognised secret before it can
+be committed, and secret scanning alerts on anything that reaches `main`), plus a
+**Gitleaks CI backstop** on every pull request (`.github/workflows/gitleaks.yml`)
+that catches generic/high-entropy patterns the native scanner may miss. The
+Gitleaks job is advisory (non-blocking); push protection is the hard gate.
+
+### Handling a flagged or leaked secret
+
+If a secret is flagged (by push protection, a secret-scanning alert, the
+Gitleaks CI job, or a human) or is otherwise known to have been committed,
+**assume it is compromised** and act in this order — speed matters more than
+tidiness:
+
+1. **Revoke / rotate first.** Immediately invalidate the credential at its
+   source (delete or roll the API key, token, service-account key, or password
+   in the provider's console). A secret that is still live is the actual risk;
+   until it is revoked, removing it from git history achieves nothing. Issue a
+   fresh credential and update the consuming systems.
+2. **Then remove it from history.** Once the secret is dead, purge it from the
+   repository so it is not re-leaked or copied by forks — rewrite history with
+   `git filter-repo` (or the BFG Repo-Cleaner), force-push the cleaned branch,
+   and ask collaborators to re-clone. For a secret-scanning alert, mark it
+   resolved once the credential is rotated and purged.
+3. **Notify.** Tell the maintainer (**basit@10xai.co.uk**) and anyone who
+   depends on the affected credential. If the leak is in a fork of this
+   skeleton, give the fork owner a heads-up. Do **not** open a public issue or
+   PR describing the live secret — follow the private reporting process above.
+
+Rotation is mandatory even if the secret was only exposed briefly: once a value
+has been pushed to a public repo it must be considered permanently public.
