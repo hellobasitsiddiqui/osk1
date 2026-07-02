@@ -48,8 +48,6 @@ public class ApiVersioningConfig implements WebMvcConfigurer {
      */
     @Override
     public void configurePathMatch(PathMatchConfigurer configurer) {
-        configurer.addPathPrefix(
-                API_V1_PREFIX,
-                HandlerTypePredicate.forBasePackage(API_BASE_PACKAGE));
+        configurer.addPathPrefix(API_V1_PREFIX, HandlerTypePredicate.forBasePackage(API_BASE_PACKAGE));
     }
 }

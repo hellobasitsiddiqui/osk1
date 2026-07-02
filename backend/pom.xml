@@ -147,6 +147,34 @@
 					</execution>
 				</executions>
 			</plugin>
+
+			<!-- Spotless (OSK-49): the code formatter/linter. palantir-java-format
+			     gives a deterministic 4-space style; we also strip unused imports and
+			     order them. `check` is bound to `verify` so the same rule runs
+			     locally, in the pre-commit hook, and in CI (they can never disagree).
+			     Run `./mvnw spotless:apply` to auto-format. -->
+			<plugin>
+				<groupId>com.diffplug.spotless</groupId>
+				<artifactId>spotless-maven-plugin</artifactId>
+				<version>2.44.5</version>
+				<configuration>
+					<java>
+						<palantirJavaFormat/>
+						<removeUnusedImports/>
+						<importOrder/>
+						<formatAnnotations/>
+					</java>
+				</configuration>
+				<executions>
+					<execution>
+						<id>spotless-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
 

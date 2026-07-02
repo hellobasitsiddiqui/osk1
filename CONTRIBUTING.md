@@ -64,3 +64,13 @@ Use the issue templates for [bugs](.github/ISSUE_TEMPLATE/bug_report.md) and
 
 See [`README.md`](README.md) for the repository layout and how to build and run
 each surface.
+
+## Code style
+
+Java is auto-formatted by **Spotless** (palantir-java-format). The same rule runs
+locally, in the pre-commit hook, and in CI, so they can never disagree.
+
+- Format everything: `cd backend && ./mvnw spotless:apply`
+- CI/`./mvnw verify` runs `spotless:check` and fails on any unformatted file.
+- Install the pre-commit hooks (recommended): `pip install pre-commit && pre-commit install`.
+  They run Spotless + whitespace hygiene on staged files and block a bad commit.

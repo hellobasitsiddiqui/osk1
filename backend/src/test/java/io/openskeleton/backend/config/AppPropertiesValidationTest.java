@@ -22,7 +22,8 @@ class AppPropertiesValidationTest {
         runner.withPropertyValues("app.environment-name=dev", "app.public-base-url=http://localhost:8080")
                 .run(ctx -> {
                     assertThat(ctx).hasNotFailed();
-                    assertThat(ctx.getBean(AppProperties.class).getEnvironmentName()).isEqualTo("dev");
+                    assertThat(ctx.getBean(AppProperties.class).getEnvironmentName())
+                            .isEqualTo("dev");
                 });
     }
 
@@ -35,6 +36,5 @@ class AppPropertiesValidationTest {
 
     @Configuration
     @EnableConfigurationProperties(AppProperties.class)
-    static class TestConfig {
-    }
+    static class TestConfig {}
 }

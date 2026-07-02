@@ -39,7 +39,8 @@ class HealthControllerTest {
     @Test
     void healthReturnsJsonEvenWhenBrowserAcceptsXml() throws Exception {
         mockMvc.perform(get("/health")
-                        .accept(MediaType.TEXT_HTML,
+                        .accept(
+                                MediaType.TEXT_HTML,
                                 MediaType.APPLICATION_XHTML_XML,
                                 MediaType.APPLICATION_XML,
                                 MediaType.ALL))
