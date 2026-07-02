@@ -112,3 +112,14 @@ jobs:
           # Don't error just because a build failed before any tests produced
           # XML — the build step already surfaces that failure.
           require_tests: false
+
+      # Upload the JaCoCo coverage report (OSK-16) so reviewers can inspect
+      # coverage even though the hard gate already ran inside `mvnw verify` above.
+      # if: always() so the report is available on a failed (e.g. gate-violation) run.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        with:
+          name: jacoco-coverage-report
+          path: backend/target/site/jacoco
+          if-no-files-found: warn
