@@ -17,6 +17,18 @@
 #       left to receive all update types (majors there are usually low-risk pins
 #       we want to see promptly).
 #
+# GROUPING (OSK-59): To cut PR noise, related updates are batched into a single
+#       PR per ecosystem via `groups:`.
+#         - maven (/backend): groups ONLY minor + patch updates together
+#           (update-types: ["minor","patch"]). Majors are deliberately excluded
+#           from the group so they stay as their own separate PRs — reviewed
+#           one-at-a-time — rather than being folded in with low-risk bumps.
+#           (Combined with the ignore below, maven majors are suppressed until a
+#           human opts in; the group's minor+patch filter is what guarantees a
+#           major could never join the grouped PR.)
+#         - github-actions (/): groups ALL update types into one PR.
+#         - docker (/backend): groups ALL update types into one PR.
+#
 # NOTE: docker (/backend) and gradle (/android) are configured ahead of their
 #       manifests landing — Dependabot simply no-ops on an ecosystem until it
 #       finds a manifest (a Dockerfile / build.gradle), at which point updates
@@ -32,6 +44,17 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    # Batch every non-major backend dependency bump into ONE PR. The
+    # update-types filter (minor + patch only) is what keeps majors OUT of the
+    # group, so a breaking major bump can never ride along inside this PR — it
+    # would surface on its own (subject to the major-version ignore below).
+    groups:
+      backend-maven-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
@@ -44,6 +67,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    # Batch ALL action bumps (any update type) into a single PR. Action pins are
+    # low-risk, so one weekly "bump the actions" PR is easier to review than a
+    # scatter of individual ones.
+    groups:
+      github-actions-all:
+        patterns:
+          - "*"
 
   # --- Backend container image (Docker) --------------------------------------
   # Watches the FROM base image in backend/Dockerfile once it exists.
@@ -52,6 +82,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Batch ALL base-image bumps (any update type) into a single PR.
+    groups:
+      backend-docker-all:
+        patterns:
+          - "*"
 
   # --- Android app (Gradle) ---------------------------------------------------
   # Watches android/ Gradle build files once they land. Minor/patch only —
