@@ -1,0 +1,114 @@
+# ci.yml — Continuous Integration for the OpenSkeleton backend (OSK-12).
+#
+# WHAT: On every pull request targeting main, and on every push to main, this
+#       workflow lint-checks, unit-tests and builds the Spring Boot backend
+#       (Maven module at backend/pom.xml) on Temurin JDK 21, then publishes the
+#       JUnit test results back onto the PR as a check.
+#
+# WHY:  This is the 1.3.1 PR gate — it gives contributors fast, reproducible
+#       feedback (build + tests) and blocks merges when the build, tests, or
+#       formatting are broken, without any human having to run Maven locally.
+#
+# SCOPE NOTES:
+#   - Coverage gates, image publishing and security scanners are intentionally
+#     out of scope for this ticket and are added by later tickets.
+#   - The lint step is a real step today but is a no-op until a formatter is
+#     wired up in OSK-49 (see the "lint" step for the exact flip-the-switch
+#     instructions).
+#
+# SECURITY: Every third-party action is pinned to a full commit SHA (never a
+#           moving tag) so a compromised/re-pointed tag cannot inject code into
+#           CI. The trailing "# vX.Y.Z" comment records the human-readable
+#           version each SHA corresponds to.
+
+name: CI
+
+# Build PRs into main and direct pushes to main. Pull-request builds catch
+# problems before merge; push builds keep the main branch itself honest.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Least-privilege default for the whole workflow: read-only access to the repo.
+# The job that publishes the test report widens this locally (see below).
+permissions:
+  contents: read
+
+# Cancel any in-progress run for the same workflow + git ref when a new commit
+# arrives, so superseded builds don't waste CI minutes. Each PR/branch gets its
+# own concurrency group via github.ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Lint, test & build (JDK 21)
+    runs-on: ubuntu-latest
+    # This job needs to write a check run and annotate the PR to publish the
+    # JUnit report, so it widens the read-only top-level permissions.
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    steps:
+      # Check out the PR/branch source so Maven has something to build.
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Install Temurin JDK 21 and enable built-in Maven dependency caching
+      # (~/.m2) keyed off the pom files, so repeat builds don't re-download the
+      # world.
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Lint / format gate.
+      #
+      # No formatter is configured yet — Spotless arrives in OSK-49. Rather than
+      # leave a placeholder that passes by absence, this step actually looks for
+      # the Spotless plugin and, if present, runs `spotless:check` which FAILS
+      # the job on any formatting violation. Until then it prints a clear
+      # "pending OSK-49" notice and passes.
+      #
+      # OSK-49 FLIP-THE-SWITCH: once the spotless-maven-plugin is declared in
+      # backend/pom.xml, this step needs no edit — the plugin-presence check
+      # below will detect it and start enforcing `spotless:check` automatically.
+      - name: Lint / format check
+        working-directory: backend
+        run: |
+          # Detect Spotless by whether it is actually declared in the build — grep
+          # the pom. Do NOT use `mvn help:describe -Dplugin=<GAV>`: that resolves the
+          # plugin descriptor from Maven Central and exits 0 even when the plugin is
+          # not in the project, which wrongly triggers `spotless:check` and fails the
+          # job with "No plugin found for prefix 'spotless'".
+          if grep -q 'spotless-maven-plugin' pom.xml; then
+            echo "Spotless detected — enforcing formatting."
+            ./mvnw -B -ntp -q spotless:check
+          else
+            echo "Lint pending OSK-49: Spotless not configured yet — skipping format check."
+          fi
+
+      # The actual build: compile, run unit tests and package. `verify` runs the
+      # full lifecycle up to and including the test phases so failing tests fail
+      # the job. -B = batch/non-interactive, -ntp = no transfer progress spam.
+      - name: Build & test
+        working-directory: backend
+        run: ./mvnw -B -ntp verify
+
+      # Publish the surefire JUnit XML as a check run on the PR. `if: always()`
+      # ensures results are reported even when the build step above failed, so
+      # reviewers see which tests broke rather than just a red job.
+      - name: Publish test report
+        if: always()
+        uses: mikepenz/action-junit-report@3585e9575db828022551b4231f165eb59a0e74e3 # v5.6.2
+        with:
+          report_paths: backend/target/surefire-reports/*.xml
+          # Don't error just because a build failed before any tests produced
+          # XML — the build step already surfaces that failure.
+          require_tests: false
