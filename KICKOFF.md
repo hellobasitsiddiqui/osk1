@@ -6,6 +6,7 @@ Read this file, then act. This is the standing kickoff for a build agent startin
 - **This repo is the ROUND ARTIFACT:** `~/Projects/osk1` (github `hellobasitsiddiqui/osk1`) — round 1's fleet-built code lands HERE. The product spec + canonical template live in `hellobasitsiddiqui/openskeleton` (do not build there).
 - **Jira:** project **OSK** on `https://10xai.atlassian.net` — the round-1 ticket set (open sprint: "OSK Sprint 1 - Foundation").
 - **Engine:** the `agents-at-work` plugin, pinned baseline **v0.2.0** — fleet conventions, Definition of Done, and lessons (`docs/agentic-lessons.md`).
+- **Jira access:** the engine's bundled MCP handles OAuth on first call. For anything the MCP can't do (attachments, Agile/sprint REST), machine-local creds live at `~/.config/teammarhaba/jira.env` — load with `set -a; . ~/.config/teammarhaba/jira.env; set +a` and **never echo the token**.
 
 ## Steps
 1. **Install the engine:**
