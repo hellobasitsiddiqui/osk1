@@ -118,3 +118,19 @@ Backend on http://localhost:8080, web on http://localhost:8081, Postgres on 5432
 (all bound to 127.0.0.1). Data persists in the `pgdata` volume. For authenticated
 testing once Firebase auth lands, run `gcloud auth application-default login` and add
 the overlay: `docker compose -f docker-compose.yml -f docker-compose.auth.yml up`.
+
+## Common commands (`make`)
+
+One entry point for every surface — run `make` to list them:
+
+| Command | Does |
+| --- | --- |
+| `make setup` | Write a local dev `.env` (idempotent) |
+| `make up` / `make down` | Start / stop the full compose stack |
+| `make build` | Build the backend jar + container images |
+| `make test` | Backend tests + coverage/format gates |
+| `make run` | Run the backend locally (no containers) |
+| `make lint` / `make fmt` | Check / apply Spotless formatting |
+
+Prerequisites: Docker, JDK 21 (the Maven wrapper is committed). From a clean clone,
+`make setup && make up` brings the stack up.
