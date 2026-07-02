@@ -35,6 +35,14 @@
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 
+		<!-- Bean Validation (Hibernate Validator). Boot's web starter no longer
+		     bundles it, but we need JSR-380 to validate @ConfigurationProperties
+		     (AppProperties) so bad/missing config fails startup fast. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
+		</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>

@@ -1,0 +1,11 @@
+# dev profile — local development, zero-setup. Points at the local Postgres that
+# docker-compose (OSK-52) brings up. The datasource block is inert until the
+# JDBC/Flyway starter lands (OSK-32); it's declared now so the wiring is ready
+# and dev never needs secrets.
+app:
+  environment-name: dev
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/osk
+    username: osk
+    password: osk

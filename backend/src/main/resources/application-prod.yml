@@ -1,0 +1,16 @@
+# prod profile — Cloud Run + Cloud SQL. NO usable defaults: every value MUST come
+# from the environment (secrets via Secret Manager, OSK-15/OSK-25).
+#
+# Note the ":" empty-default syntax (${VAR:}): if the env var is unset this
+# resolves to an EMPTY string (not the literal "${VAR}"), so @NotBlank on
+# AppProperties rejects it and startup fails fast — the intended "prod never boots
+# on silent defaults" guarantee. A real env var overrides this (env has higher
+# precedence than profile YAML), so prod boots only when explicitly configured.
+app:
+  environment-name: ${APP_ENVIRONMENT_NAME:}
+  public-base-url: ${APP_PUBLIC_BASE_URL:}
+spring:
+  datasource:
+    url: ${DB_URL:}
+    username: ${DB_USERNAME:}
+    password: ${DB_PASSWORD:}
