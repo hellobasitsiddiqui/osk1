@@ -52,7 +52,9 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void validationIsMappedTo400WithErrors() throws Exception {
-        mvc.perform(post("/test/validate").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/test/validate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.errors").isArray());
@@ -64,7 +66,8 @@ class GlobalExceptionHandlerTest {
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.detail").value("An unexpected error occurred."))
                 // the real exception message must NOT be serialised to the client
-                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("top secret"))));
+                .andExpect(content()
+                        .string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("top secret"))));
     }
 
     @Test
@@ -97,7 +100,6 @@ class GlobalExceptionHandlerTest {
             return "ok";
         }
 
-        record Payload(@NotBlank String name) {
-        }
+        record Payload(@NotBlank String name) {}
     }
 }

@@ -18,10 +18,11 @@ public class OpenApiConfig {
 
     @Bean
     public OpenAPI openSkeletonOpenAPI() {
-        return new OpenAPI().info(new Info()
-                .title("OpenSkeleton API")
-                .version("v1")
-                .description("Generated API documentation for the OpenSkeleton backend.")
-                .license(new License().name("MIT")));
+        return new OpenAPI()
+                .info(new Info()
+                        .title("OpenSkeleton API")
+                        .version("v1")
+                        .description("Generated API documentation for the OpenSkeleton backend.")
+                        .license(new License().name("MIT")));
     }
 }

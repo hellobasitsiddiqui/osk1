@@ -1,0 +1,23 @@
+# Pre-commit hooks (OSK-49). Install once: `pip install pre-commit && pre-commit install`.
+# These run on staged files before every commit and block on violations, catching
+# style issues locally before they reach CI — which enforces the SAME Spotless rule
+# via `./mvnw verify` (OSK-12), so hooks and CI can never disagree.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: mixed-line-ending
+        args: [--fix=lf]
+  - repo: local
+    hooks:
+      # Authoritative Java formatting — same Spotless config the build/CI use.
+      - id: spotless
+        name: spotless (palantir-java-format)
+        entry: bash -c 'cd backend && ./mvnw -q -B -ntp spotless:apply && git add $(git diff --name-only)'
+        language: system
+        files: \.java$
+        pass_filenames: false

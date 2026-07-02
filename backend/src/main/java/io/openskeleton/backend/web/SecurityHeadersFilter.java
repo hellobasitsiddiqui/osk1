@@ -47,15 +47,13 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
      * ({@code frame-ancestors 'none'}), and forbid relative-URL rebasing
      * ({@code base-uri 'none'}). The web UI is a separate app and is unaffected.
      */
-    private static final String CONTENT_SECURITY_POLICY =
-            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+    private static final String CONTENT_SECURITY_POLICY = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
 
     /** One year, in seconds — the conventional HSTS max-age. */
     private static final String HSTS_VALUE = "max-age=31536000; includeSubDomains";
 
     @Override
-    protected void doFilterInternal(
-            HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
 
         // Applied unconditionally on both HTTP and HTTPS — these are safe everywhere.

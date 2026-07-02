@@ -20,12 +20,10 @@ import org.springframework.validation.annotation.Validated;
 public class AppProperties {
 
     /** Human-readable name of the running environment (e.g. local/dev/test/prod). */
-    @NotBlank
-    private String environmentName;
+    @NotBlank private String environmentName;
 
     /** Public base URL the app is reached at; used for absolute links/CORS later. */
-    @NotBlank
-    private String publicBaseUrl;
+    @NotBlank private String publicBaseUrl;
 
     public String getEnvironmentName() {
         return environmentName;

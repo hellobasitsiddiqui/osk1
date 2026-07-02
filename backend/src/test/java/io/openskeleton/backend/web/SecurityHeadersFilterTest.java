@@ -39,8 +39,8 @@ class SecurityHeadersFilterTest {
                 .andExpect(header().string("X-Frame-Options", "DENY"))
                 .andExpect(header().string("Referrer-Policy", "no-referrer"))
                 .andExpect(header().string(
-                        "Content-Security-Policy",
-                        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"))
+                                "Content-Security-Policy",
+                                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"))
                 .andExpect(header().doesNotExist("Strict-Transport-Security"));
     }
 
@@ -53,7 +53,6 @@ class SecurityHeadersFilterTest {
         mockMvc.perform(get("/health").header("X-Forwarded-Proto", "https"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
-                .andExpect(header().string(
-                        "Strict-Transport-Security", "max-age=31536000; includeSubDomains"));
+                .andExpect(header().string("Strict-Transport-Security", "max-age=31536000; includeSubDomains"));
     }
 }
