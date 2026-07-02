@@ -166,6 +166,13 @@ The human asked whether running the pipeline + merging to `main` locally then pu
   4. Sequence `pom.xml`-touching tickets rather than parallelizing — on a small surface the rebase overhead can exceed the parallelism gain.
 - **Verdict:** keep PRs + squash-merge, cut conflicts at the source; don't bypass `main` and don't touch rate limits. Flows OUT → engine merge/CD guidance.
 
+### H15 — Event-driven scheduling: the instant a ticket merges, launch its now-unblocked children (don't batch to end-of-wave)
+The human flagged that after a wave's tickets merged, no new ticket had started — I'd run claim→build→merge→Done for the *whole* wave and only *then* looked for the next frontier, leaving an idle gap. **Correct model: treat every `merge → Done` as an event that recomputes the ready frontier and immediately launches any ticket whose last open blocker just closed** — concurrently with the rest of the current wave still finishing.
+- **Rule:** on each merge, walk that ticket's outward `blocks` links; for each target, if ALL its `is blocked by` links are now Done AND it's agent-buildable (not `human`/`no-replay`, not a gate awaiting an unbuilt dep), claim + launch it right away. Keep the pipeline continuously saturated to the ready-width — never drain-then-refill.
+- **Concrete miss this round:** OSK-47 merging unblocked OSK-15 (BB OSK-47+OSK-20) and OSK-30 (BB OSK-47+OSK-13); both should have fired at OSK-47's merge, not after OSK-63/65/100/107/133 all settled. (Applied immediately once flagged — launched OSK-15 + OSK-30.)
+- **Why it matters:** batching serializes waves (wave N fully drains before N+1 starts), wasting the tail time when a wave is 90% done but one straggler holds the next launch. Edge-triggered scheduling keeps agents busy the moment work exists.
+- **Implementation note:** the orchestrator already receives a per-agent completion notification — on each, do the merge, then run the "what did this unblock?" check and launch. Flows OUT → engine orchestrator loop (make the scheduler **edge-triggered on merge**, not wave-barriered). Pairs with [[H14]]/[[L8]] (compute the frontier across the whole project, pull the ready subset in).
+
 ---
 
 _Living document — append a dated finding/lesson whenever the fleet teaches one; fold the durable ones out via docs PRs. **Every HITL intervention gets an H-entry above (H6/H10).**_
