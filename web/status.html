@@ -132,7 +132,6 @@
 
       /* --- Metrics / chart placeholders (deferred follow-up) --------------- */
       .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-      @media (max-width: 34rem) { .charts { grid-template-columns: 1fr; } }
       .chart {
         border: 1px dashed var(--border);
         border-radius: 8px;
@@ -159,6 +158,25 @@
       }
       .foot a { color: var(--accent); text-decoration: none; }
       .foot a:hover { text-decoration: underline; }
+
+      /* OSK-117: mobile-web polish. A single phone breakpoint (~360–430px wide);
+         the desktop layout above is untouched. Mirrors the same rules used on
+         index.html and ops.html so the three pages stay consistent. */
+      @media (max-width: 640px) {
+        /* Reclaim horizontal room on a narrow screen. */
+        body { padding: 1.5rem 1rem 2.5rem; }
+        h1 { font-size: 1.3rem; }
+        .panel { padding: 1rem; }
+        /* The two chart placeholders stack instead of squeezing side by side. */
+        .charts { grid-template-columns: 1fr; }
+        /* Let a long component name wrap under its status rather than overflow. */
+        .component { flex-wrap: wrap; gap: 0.25rem 0.75rem; }
+        .component__label { min-width: 0; text-align: left; }
+        /* Any long word / URL-ish string wraps instead of scrolling the page. */
+        .component__name, .chart__msg, .foot { overflow-wrap: anywhere; }
+        /* Comfortable tap target for the footer home link. */
+        .foot a { display: inline-block; padding: 0.25rem 0; }
+      }
     </style>
   </head>
   <body>

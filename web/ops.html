@@ -162,6 +162,31 @@
       }
       .foot a { color: var(--accent); text-decoration: none; }
       .foot a:hover { text-decoration: underline; }
+
+      /* OSK-117: mobile-web polish. A single phone breakpoint (~360–430px wide);
+         the desktop layout above is untouched. Mirrors index.html / status.html. */
+      @media (max-width: 640px) {
+        /* Reclaim horizontal room on a narrow screen. */
+        body { padding: 1.5rem 1rem 2.5rem; }
+        h1 { font-size: 1.3rem; }
+        .panel { padding: 1rem; }
+        /* Stack each link row: the name on its own line, the description beneath
+           and left-aligned. Side-by-side columns are too cramped on a phone and
+           the inline code paths would otherwise overflow. */
+        .link {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 0.15rem;
+          padding: 0.7rem 0;
+        }
+        /* Bigger, easier-to-tap link with a legible font size on touch screens. */
+        .link a { display: inline-block; padding: 0.15rem 0; font-size: 1rem; }
+        .link__desc { text-align: left; }
+        /* Long code paths / URLs wrap instead of forcing a sideways scroll. */
+        .link__desc, .link__desc code, .foot { overflow-wrap: anywhere; }
+        /* Comfortable tap target for the footer home link. */
+        .foot a { display: inline-block; padding: 0.25rem 0; }
+      }
     </style>
   </head>
   <body>

@@ -88,6 +88,19 @@
       .status-link { margin-top: 0.9rem; font-size: 0.78rem; }
       .status-link a { color: var(--muted); text-decoration: none; }
       .status-link a:hover { color: var(--accent); text-decoration: underline; }
+
+      /* OSK-117: mobile-web polish. Phones in portrait (~360–430px wide) only —
+         everything above is untouched, so the desktop card is preserved. */
+      @media (max-width: 640px) {
+        /* Trim the outer padding a touch so the card gets the full narrow width. */
+        body { padding: 1.25rem 1rem; }
+        h1 { font-size: 1.6rem; }
+        /* Long deploy SHAs / build ids must wrap, never force a sideways scroll. */
+        .build { overflow-wrap: anywhere; }
+        /* Roomier, easier-to-tap footer links (status / ops) on touch screens. */
+        .status-link { font-size: 0.85rem; }
+        .status-link a { display: inline-block; padding: 0.35rem 0.15rem; }
+      }
     </style>
   </head>
   <body>
