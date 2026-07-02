@@ -1,0 +1,112 @@
+# image.yml — Build & push the backend container image to Artifact Registry (OSK-19).
+#
+# WHAT: Builds the backend container from the OSK-37 multi-stage Dockerfile
+#       (context: backend/). On a pull request it ONLY builds — proving the image
+#       still assembles — and pushes nothing. On a push to main it authenticates to
+#       Google Cloud with keyless OIDC (Workload Identity Federation) and pushes the
+#       image to Artifact Registry tagged with the commit SHA AND `latest`.
+#
+# WHY:  This produces the immutable, deployable artifact that Cloud Run consumes
+#       (deploy itself is OSK-13/1.4.1, out of scope here). SHA tags give traceable,
+#       reproducible deploys; `latest` gives a convenient "current main" pointer.
+#       Push is gated to main so PR builds stay cheap and side-effect-free, and so a
+#       fork PR can never mint GCP credentials or write to the registry.
+#
+# AUTH:  Keyless — no service-account JSON in secrets. GitHub mints a short-lived
+#        OIDC token; the WIF provider (which trusts ONLY this repo) exchanges it for
+#        an access token that the deploy SA is allowed to use. Same backbone proven
+#        by deploy-auth-check.yml (OSK-42) and reused by every deploy job.
+#
+# SECURITY: Every third-party action is pinned to a full commit SHA (never a moving
+#           tag) so a re-pointed/compromised tag cannot inject code into CI. The
+#           trailing "# vX.Y.Z" comment records the version each SHA corresponds to.
+
+name: Image
+
+# Build the image on PRs into main (validate only) and on pushes to main (build +
+# push). The push-vs-build decision is made per-step below via github.event_name;
+# because on.push is restricted to main, any `push` event here is inherently a main
+# push, so "push == publish" is safe.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Least privilege for the whole workflow.
+#   - contents: read  → checkout the source.
+#   - id-token: write → let the runner mint the OIDC token WIF trusts. Only the
+#     auth step (main pushes) consumes it; PR builds skip auth entirely, but the
+#     permission is harmless to declare and lives with the workflow that needs it.
+permissions:
+  contents: read
+  id-token: write
+
+# Cancel a superseded in-flight run for the same ref when a newer commit lands, so
+# we don't waste minutes building an image nobody will use.
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Fully-qualified Artifact Registry image path (repo created by OSK-19/OSK-51):
+  # <region>-docker.pkg.dev/<project>/<repository>/<image>.
+  IMAGE: europe-west2-docker.pkg.dev/openskeleton-one/osk-backend/backend
+
+jobs:
+  image:
+    name: Build (and push on main) backend image
+    runs-on: ubuntu-latest
+    steps:
+      # Check out the source so Docker has the backend/ build context + Dockerfile.
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Buildx gives us BuildKit — layer caching, better multi-stage handling, and
+      # the build-push-action's push/tag features.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      # --- Auth + registry login: main pushes ONLY --------------------------------
+      # Guarded by github.event_name == 'push' so PRs never authenticate to GCP and
+      # never obtain registry credentials (defence in depth for fork PRs). token_format
+      # access_token yields a short-lived token we hand to docker login below.
+      - name: Authenticate to Google Cloud (keyless OIDC / WIF)
+        id: auth
+        if: ${{ github.event_name == 'push' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          project_id: openskeleton-one
+          workload_identity_provider: projects/476227744481/locations/global/workloadIdentityPools/github/providers/github-provider
+          service_account: gh-deployer@openskeleton-one.iam.gserviceaccount.com
+          token_format: access_token
+
+      # Log Docker into Artifact Registry using the federated access token (username
+      # is the fixed literal "oauth2accesstoken" for GCP). This writes a static auths
+      # entry into the Docker config that BuildKit reads at push time.
+      - name: Log in to Artifact Registry
+        if: ${{ github.event_name == 'push' }}
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: europe-west2-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      # --- Build (always) and push (main only) ------------------------------------
+      # push evaluates to true only on a push event (i.e. a merge to main); on PRs it
+      # is false, so BuildKit builds the image to validate the Dockerfile and stops
+      # there. Tags are always computed but only matter when pushing.
+      #
+      # provenance: false keeps the result a single, plain image manifest — build-push
+      # v6 would otherwise attach SLSA provenance and produce an OCI image index with
+      # extra unreferenced manifests, which is needless weight for a Cloud Run target.
+      - name: Build image (push only on main)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          provenance: false
