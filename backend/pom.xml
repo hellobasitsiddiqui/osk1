@@ -74,9 +74,62 @@
 			<version>2.8.6</version>
 		</dependency>
 
+		<!-- Persistence (OSK-32): Spring Data JPA / Hibernate. We keep the ORM even
+		     though there are no entities yet — Hibernate runs in `validate` mode and
+		     asserts the (currently empty) mapping matches the Flyway-built schema, so
+		     the wiring is proven end-to-end from day one. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-jpa</artifactId>
+		</dependency>
+
+		<!-- Flyway (OSK-32): versioned SQL migrations. flyway-core is the engine;
+		     flyway-database-postgresql adds the Postgres-specific support Flyway 10+
+		     requires as a separate module. Spring Boot auto-runs migrations on
+		     startup, so the schema is always built from db/migration before Hibernate
+		     validates it. Versions are managed by the Boot parent. -->
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+
+		<!-- PostgreSQL JDBC driver (OSK-32): runtime-only — compiled code never
+		     references it directly; it is loaded reflectively by the datasource. -->
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+		<!-- Testcontainers (OSK-29): every @SpringBootTest runs against a throwaway,
+		     real Postgres (via the jdbc:tc datasource URL in test application
+		     properties) instead of H2, so migrations + Hibernate validation are
+		     exercised against the true database. spring-boot-testcontainers gives the
+		     Boot integration; postgresql is the module; junit-jupiter the lifecycle.
+		     All versions managed by the Boot parent. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-testcontainers</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>junit-jupiter</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
