@@ -14,7 +14,13 @@
       },
       "CurrentUser" : {
         "properties" : {
+          "displayName" : {
+            "type" : "string"
+          },
           "email" : {
+            "type" : "string"
+          },
+          "role" : {
             "type" : "string"
           },
           "uid" : {
