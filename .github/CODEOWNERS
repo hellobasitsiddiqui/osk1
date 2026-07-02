@@ -1,1 +1,17 @@
+# CODEOWNERS — default reviewers for pull requests.
+#
+# GitHub requests a review from the matching owner automatically when a PR
+# touches a path. The LAST matching pattern wins, so the per-directory rules
+# below refine the global fallback. Everything is owned by the sole maintainer
+# for now; split ownership out as the team grows.
+
+# Global fallback — owns anything not matched by a more specific rule below.
 * @hellobasitsiddiqui
+
+# Per-surface ownership (mirrors the mono-repo directory map in README.md).
+/backend/  @hellobasitsiddiqui
+/web/      @hellobasitsiddiqui
+/webview/  @hellobasitsiddiqui
+/android/  @hellobasitsiddiqui
+/infra/    @hellobasitsiddiqui
+/docs/     @hellobasitsiddiqui
