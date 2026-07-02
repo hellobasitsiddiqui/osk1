@@ -10,6 +10,8 @@
  */
 package io.openskeleton.backend.web;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -54,5 +56,41 @@ class SecurityHeadersFilterTest {
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(header().string("Strict-Transport-Security", "max-age=31536000; includeSubDomains"));
+    }
+
+    /**
+     * OSK-204: the strict {@code default-src 'none'} CSP blanked out the Swagger
+     * UI, so the springdoc OpenAPI/Swagger paths must instead receive a relaxed,
+     * same-origin CSP that lets the docs load their own assets. We assert the
+     * OpenAPI JSON path does NOT carry {@code default-src 'none'} and that it
+     * carries the {@code default-src 'self'} policy — while the always-on
+     * baseline headers stay intact on this path too.
+     */
+    @Test
+    void openApiDocsPathGetsRelaxedCspNotStrict() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                // Always-on baseline headers are unchanged on this path.
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("X-Frame-Options", "DENY"))
+                .andExpect(header().string("Referrer-Policy", "no-referrer"))
+                // The strict deny-everything policy must NOT be applied here...
+                .andExpect(header().string("Content-Security-Policy", not(containsString("default-src 'none'"))))
+                // ...instead the relaxed same-origin policy is applied.
+                .andExpect(header().string("Content-Security-Policy", containsString("default-src 'self'")));
+    }
+
+    /**
+     * OSK-204 guard: non-docs (JSON API) paths must keep the strict CSP. This is
+     * the existing /health assertion re-stated as a focused regression check so
+     * a future over-broad relaxation of the Swagger carve-out is caught.
+     */
+    @Test
+    void nonDocsPathKeepsStrictCsp() throws Exception {
+        mockMvc.perform(get("/health"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(
+                                "Content-Security-Policy",
+                                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"));
     }
 }
