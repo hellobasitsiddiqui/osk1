@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<!--
+  index.html — OpenSkeleton web front-end, minimal branded one-pager.
+
+  Why this exists: it is the single static entry point for the SPA. Even though
+  there is no client-side router yet, the nginx config falls back to this file
+  for any unknown path (SPA-style routing), so this document must be able to
+  render on its own for both "/" and deep routes like "/some/deep/route".
+
+  Design choices:
+  - Everything is inlined (CSS + markup) so the page is fully self-contained and
+    has zero external requests — no fonts, no CDN, no analytics, no secrets.
+  - Kept intentionally small; real app bundles land in a later ticket. The
+    "build step" for now is a no-op copy (see web/README.md), so what you see
+    here is exactly what ships.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenSkeleton</title>
+    <style>
+      /* Simple dark, centered brand card. No external assets by design. */
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --accent: #4c8bf5;
+        --muted: #8b949e;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at 50% 30%, #161b22 0%, var(--bg) 70%);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        text-align: center;
+        padding: 1.5rem;
+      }
+      .card { max-width: 32rem; }
+      .logo {
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 1.25rem;
+        border-radius: 18px;
+        background: linear-gradient(135deg, var(--accent), #7c3aed);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 2rem;
+        font-weight: 700;
+        color: #fff;
+      }
+      h1 { font-size: 1.9rem; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
+      p { color: var(--muted); line-height: 1.5; margin: 0.25rem 0; }
+      .tag {
+        display: inline-block;
+        margin-top: 1.25rem;
+        padding: 0.35rem 0.8rem;
+        border: 1px solid #30363d;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="logo" aria-hidden="true">OS</div>
+      <h1>OpenSkeleton</h1>
+      <p>The web front-end is up and serving from nginx.</p>
+      <p>Static build placeholder — the full single-page app lands soon.</p>
+      <span class="tag">web &middot; nginx &middot; container</span>
+    </main>
+  </body>
+</html>
