@@ -19,7 +19,7 @@
 # Stage 1 — build: compile and package the application into a runnable jar.
 # eclipse-temurin 21 JDK on Ubuntu "jammy" gives us a full JDK 21 toolchain.
 # ===========================================================================
-FROM eclipse-temurin:21-jdk-jammy AS build
+FROM eclipse-temurin:25-jdk-jammy AS build
 
 WORKDIR /workspace
 
@@ -50,7 +50,7 @@ RUN cp target/*.jar /app.jar
 # Stage 2 — runtime: minimal JRE that runs the jar and nothing else.
 # 21-jre-jammy is a slim JRE (no compiler/build tooling) — smaller + less to CVE.
 # ===========================================================================
-FROM eclipse-temurin:21-jre-jammy AS runtime
+FROM eclipse-temurin:25-jre-jammy AS runtime
 
 # Run as a NON-ROOT user. The temurin base has no unprivileged user by default,
 # so we create one. A container that never runs as root limits blast radius if
