@@ -11,9 +11,13 @@ app:
   public-base-url: ${APP_PUBLIC_BASE_URL:}
 spring:
   datasource:
-    url: ${DB_URL:}
-    username: ${DB_USERNAME:}
-    password: ${DB_PASSWORD:}
+    # Cloud SQL via the socket factory / connector (OSK-20) — no public IP. Cloud Run
+    # mounts the instance socket (`--add-cloudsql-instances`) and injects DB_PASSWORD
+    # from Secret Manager at deploy (OSK-47). INSTANCE_CONNECTION_NAME + DB_NAME come
+    # from the runtime env; there is no committed default password.
+    url: jdbc:postgresql:///${DB_NAME:osk}?cloudSqlInstance=${INSTANCE_CONNECTION_NAME}&socketFactory=com.google.cloud.sql.postgres.SocketFactory
+    username: ${DB_USERNAME:app}
+    password: ${DB_PASSWORD}
 
 # API docs are NOT exposed in prod — keep the interactive explorer off the public
 # surface. The spec can still be generated at build time for the drift check (OSK-88).
