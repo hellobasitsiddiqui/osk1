@@ -40,3 +40,12 @@ Timestamps via `TZ='Europe/London' date`. Secrets recorded as `<redacted>`.
 
 **10.** `2026-07-02 18:12 BST` — "make sure you keep adding all hitl as lessons so we not repeat them"
 > Added the "HITL interventions → lessons" section (H1–H6) to `LESSONS-LEARNED.md` as a standing directive; logged this instruction. HITL lesson H6.
+
+**11.** `2026-07-02 18:20 BST` — "why you going linear not workflow style"
+> Explained the forced-serial DAG spine (OSK-14 → OSK-31 gate everything; true ready-width was 1), finished OSK-31, then pivoted to parallel fan-out. Lesson L6.
+
+**12.** `2026-07-02 18:45 BST` — "why there is no dynamic workflow yet" / "why no dynamic workflow" (repeated)
+> Launched the dynamic Workflow — 3 parallel build agents in isolated worktrees (OSK-43 web, OSK-12 CI, OSK-26 docs). Takeaway: launch the workflow the instant ready-width > 1; don't hand-build serially.
+
+**13.** `2026-07-02 18:55 BST` — "continue"
+> Merged PRs #3/#4/#5, closed OSK-43/12/26, caught + fixed a CI lint bug (L5), recorded lessons, proceeding to sequence the backend set + fan out remaining disjoint tickets.

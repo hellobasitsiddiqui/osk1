@@ -82,4 +82,17 @@ This section is now mandatory: append a dated H-entry for **every** human interv
 
 ---
 
+### L5 — Detect an optional Maven plugin by the pom, never `mvn help:describe -Dplugin=<GAV>`
+A CI lint step used `mvnw help:describe -Dplugin=com.diffplug.spotless:spotless-maven-plugin` to decide whether Spotless was configured. That command **resolves the plugin descriptor from Maven Central and exits 0 even when the plugin isn't in the project**, so the "is it present?" guard was always true → it ran `spotless:check` → "No plugin found for prefix 'spotless'" → red CI. Detect optional plugins with `grep <artifactId> pom.xml`. (OSK-12; caught by the PR gate on its own first run — local `mvn verify` never ran the guarded branch. Reinforces "don't trust local green — the CI lane exercises a different path.")
+
+### L6 — Parallelize across surfaces, sequence within a surface (proven on wave-2a)
+The dynamic Workflow built OSK-43 (`web/`), OSK-12 (`.github/`), OSK-26 (`docs/`) concurrently in **isolated git worktrees** → 3 PRs in ~3.7 min, zero merge-gate conflicts (disjoint file trees). The backend-code set (OSK-18/23/27/39/49/50/57) all touch `backend/pom.xml` + config, so it must be **sequenced**, not fanned out. Rule: fan-out width = number of *disjoint-file-tree* ready tickets, not the raw ready count. Keep Jira transitions + merges with the orchestrator; give worktree build-agents only build→verify→PR.
+
+---
+
+## Round-1 progress ledger (Sprint 1 — Foundation)
+Done (merged to `main`): **OSK-14** (mono-repo) · **OSK-31** (Spring Boot `/health` skeleton) · **OSK-43** (web nginx image) · **OSK-12** (CI PR workflow) · **OSK-26** (ADRs + ARCHITECTURE + SECURITY). Findings on OSK-88 (false-root) + OSK-203 (rootless-by-design). Next: sequence the `backend/` set behind CI; fan out remaining disjoint `.github/` + root tickets.
+
+---
+
 _Living document — append a dated finding/lesson whenever the fleet teaches one; fold the durable ones out via docs PRs. **Every HITL intervention gets an H-entry above (H6).**_
