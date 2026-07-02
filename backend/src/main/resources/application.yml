@@ -16,3 +16,30 @@ server:
 app:
   environment-name: local
   public-base-url: http://localhost:8080
+
+# --- Actuator (ops surface, OSK-50) --------------------------------------------
+# Expose only health/info/metrics over HTTP. health is public (liveness/readiness
+# probes hit it); info + metrics are meant to require auth — that enforcement is
+# added with the security config (OSK-28), which permit-lists health and
+# authenticates the rest. show-details=when-authorized hides component health
+# detail from anonymous callers (so today, with no auth layer yet, /actuator/health
+# returns just {"status":"UP"} and never leaks internals).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  info:
+    env:
+      enabled: true
+
+# Values surfaced by /actuator/info.
+info:
+  app:
+    name: ${spring.application.name}
+    environment: ${app.environment-name}
