@@ -1,0 +1,30 @@
+# Keyless deploy-auth check (OSK-42): proves GitHub Actions can authenticate to GCP
+# via Workload Identity Federation (OIDC) with NO service-account key. This is the
+# auth backbone every deploy job (OSK-19/47/13) reuses.
+name: Deploy auth check (OIDC)
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/deploy-auth-check.yml', 'infra/gcp.env']
+  workflow_dispatch:
+
+# id-token: write is what lets the runner mint the OIDC token WIF trusts.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  auth-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - id: auth
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          project_id: openskeleton-one
+          workload_identity_provider: projects/476227744481/locations/global/workloadIdentityPools/github/providers/github-provider
+          service_account: gh-deployer@openskeleton-one.iam.gserviceaccount.com
+      # No-op federated call: if this returns the project id, keyless auth works.
+      - name: Prove keyless auth
+        run: gcloud projects describe openskeleton-one --format="value(projectId)"
