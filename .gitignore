@@ -1,0 +1,83 @@
+# =============================================================================
+# Root .gitignore — OpenSkeleton mono-repo
+#
+# Grouped by ecosystem so it's obvious why each entry exists. Each surface
+# (backend / web / android / …) may add its own scoped .gitignore for
+# tool-specific noise; this root file covers what's common across the repo plus
+# the security-critical blocks that must apply everywhere.
+# =============================================================================
+
+# --- Secrets & environment (NEVER commit) -----------------------------------
+# Real env files are per-machine / per-environment. Only the committed template
+# (.env.example, added by a later ticket) is tracked.
+.env
+.env.*
+!.env.example
+*.local
+
+# Credential material — defense-in-depth. This project is keyless (deploys use
+# GitHub OIDC), so none of these files should ever exist in the first place.
+# Blocking them by pattern means a service-account key, ADC dump, or signing
+# cert can't be committed and leaked by accident.
+*-key.json
+*-credentials.json
+service-account*.json
+application_default_credentials.json
+gha-creds-*.json
+*.pem
+*.p12
+*.pfx
+*.key
+*.keystore
+*.jks
+
+# --- Java / Maven / Gradle (backend) ----------------------------------------
+target/
+build/
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+replay_pid*
+.gradle/
+.mvn/timing.properties
+# ...but keep the build-tool wrappers: they're committed so a fresh clone can
+# build without a pre-installed Maven/Gradle. (Negated because *.jar hid them.)
+!.mvn/wrapper/maven-wrapper.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# --- Node / JavaScript (web, tooling) ---------------------------------------
+node_modules/
+dist/
+coverage/
+.next/
+.nuxt/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# --- Android (mobile shell) -------------------------------------------------
+*.apk
+*.aab
+*.ap_
+*.dex
+local.properties
+.cxx/
+captures/
+
+# --- macOS ------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+._*
+.Spotlight-V100
+.Trashes
+
+# --- IDEs / editors ---------------------------------------------------------
+.idea/
+*.iml
+.vscode/
+*.swp
