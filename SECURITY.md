@@ -119,3 +119,43 @@ tidiness:
 
 Rotation is mandatory even if the secret was only exposed briefly: once a value
 has been pushed to a public repo it must be considered permanently public.
+
+## HTTP security response headers (OSK-23)
+
+The backend sets a baseline set of security headers on **every** HTTP response,
+via a plain servlet filter (`io.openskeleton.backend.web.SecurityHeadersFilter`).
+We deliberately do **not** use Spring Security for this: it would switch on
+default authentication across the whole app and break every existing
+unauthenticated endpoint. Response-header hardening needs no auth framework.
+
+| Header | Value | Notes |
+|--------|-------|-------|
+| `X-Content-Type-Options` | `nosniff` | Stops browsers MIME-sniffing a response away from its declared type. |
+| `X-Frame-Options` | `DENY` | Legacy click-jacking defence; refuses to be framed anywhere. |
+| `Referrer-Policy` | `no-referrer` | Never leak this API's URLs in an outbound `Referer`. |
+| `Content-Security-Policy` | `default-src 'none'; frame-ancestors 'none'; base-uri 'none'` | Strict, API-appropriate policy — see below. |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | **Only** on secure requests — see below. |
+
+### Why the CSP is safe to be this strict
+
+This backend is a **JSON-only API**. It serves no HTML, loads no scripts,
+styles, images, or fonts, and is never meant to be embedded in a page. The
+browser-facing web UI is a **separate nginx app** with its own, more permissive
+CSP. Because nothing in *this* service's responses references any content
+source, a "deny everything" policy (`default-src 'none'`) costs us nothing and
+removes an entire class of injection/framing risk. `frame-ancestors 'none'` is
+the modern equivalent of `X-Frame-Options: DENY` (both are sent for coverage of
+older browsers), and `base-uri 'none'` blocks `<base>`-tag URL rebasing.
+
+If a future endpoint ever needs to serve HTML or a browsable surface, relax the
+policy for that path specifically rather than weakening this global default.
+
+### Why HSTS is conditional
+
+`Strict-Transport-Security` tells a browser to only ever contact this host over
+HTTPS. Emitting it over plain HTTP is meaningless and, worse, could wrongly pin
+a local/dev host to HTTPS. The filter therefore sends HSTS **only** when the
+request actually arrived over TLS — detected either directly
+(`request.isSecure()`) or, in the Cloud Run deployment where TLS is terminated
+by an upstream proxy, via the `X-Forwarded-Proto: https` request header. Plain
+HTTP (local dev) never receives HSTS.
