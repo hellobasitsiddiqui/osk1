@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -48,6 +50,26 @@ class GlobalExceptionHandlerTest {
         mvc.perform(get("/test/conflict"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
+    void objectOptimisticLockingFailureIsMappedTo409() throws Exception {
+        // The Spring-translated form of a stale-version write (OSK-84) -> 409 problem+json.
+        mvc.perform(get("/test/optimistic-object"))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.title").value("Conflict"));
+    }
+
+    @Test
+    void jpaOptimisticLockExceptionIsMappedTo409() throws Exception {
+        // The JPA-native optimistic-lock exception is mapped to the same 409 contract.
+        mvc.perform(get("/test/optimistic-jpa"))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.title").value("Conflict"));
     }
 
     @Test
@@ -93,6 +115,16 @@ class GlobalExceptionHandlerTest {
         @org.springframework.web.bind.annotation.GetMapping("/test/boom")
         String boom() {
             throw new RuntimeException("top secret internal detail");
+        }
+
+        @org.springframework.web.bind.annotation.GetMapping("/test/optimistic-object")
+        String optimisticObject() {
+            throw new ObjectOptimisticLockingFailureException("users", new RuntimeException("stale version"));
+        }
+
+        @org.springframework.web.bind.annotation.GetMapping("/test/optimistic-jpa")
+        String optimisticJpa() {
+            throw new OptimisticLockException("stale entity");
         }
 
         @PostMapping("/test/validate")

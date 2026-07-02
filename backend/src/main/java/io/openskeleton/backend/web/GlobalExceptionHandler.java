@@ -1,10 +1,12 @@
 package io.openskeleton.backend.web;
 
+import jakarta.persistence.OptimisticLockException;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -16,11 +18,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * stack trace is never leaked to the caller.
  *
  * <p>Mappings implemented here: bean-validation → 400, {@link NotFoundException}
- * → 404, {@link ConflictException} → 409, and a catch-all → 500. The
- * data-layer-specific mappings named in the ticket
- * ({@code DataIntegrityViolationException} → 409, bad {@code ?sort=} /
- * oversized-page → 400) are deferred until the persistence layer exists (OSK-32),
- * because those exception types are not yet on the classpath — see the ticket note.
+ * → 404, {@link ConflictException} → 409, optimistic-locking failures
+ * ({@link ObjectOptimisticLockingFailureException} / {@link OptimisticLockException})
+ * → 409, and a catch-all → 500. The remaining data-layer-specific mappings named in
+ * the OSK-39 ticket ({@code DataIntegrityViolationException} → 409, bad
+ * {@code ?sort=} / oversized-page → 400) are deferred until they are needed — see the
+ * ticket note.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -39,6 +42,26 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ConflictException.class)
     public ProblemDetail handleConflict(ConflictException ex) {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        pd.setTitle("Conflict");
+        return pd;
+    }
+
+    /**
+     * Optimistic-locking failure → 409. Raised when a write targets a row another
+     * transaction has already advanced (the {@code @Version} check on
+     * {@code BaseEntity} matches zero rows): Hibernate throws
+     * {@code StaleObjectStateException}, surfaced by Spring as
+     * {@link ObjectOptimisticLockingFailureException}, and the JPA-native
+     * {@link OptimisticLockException} is mapped alongside it for the paths where it is
+     * not translated. Returning 409 (not a silent overwrite) tells the caller their
+     * copy was stale so they can reload and retry — the concurrency guarantee OSK-84
+     * adds on top of soft-delete.
+     */
+    @ExceptionHandler({ObjectOptimisticLockingFailureException.class, OptimisticLockException.class})
+    public ProblemDetail handleOptimisticLock(Exception ex) {
+        log.debug("Optimistic-locking conflict on concurrent update", ex);
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT, "The resource was updated concurrently. Reload the latest version and retry.");
         pd.setTitle("Conflict");
         return pd;
     }
