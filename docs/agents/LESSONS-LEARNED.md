@@ -90,8 +90,17 @@ The dynamic Workflow built OSK-43 (`web/`), OSK-12 (`.github/`), OSK-26 (`docs/`
 
 ---
 
+## More findings (wave-2b)
+
+### F7 — `dependency-review-action` needs the repo "Dependency graph" setting ON (human step)
+OSK-24's `dependency-review.yml` errored *"Dependency review is not supported on this repository. Please ensure that Dependency graph is enabled."* That's a repo Settings › Code security toggle, not a workflow defect (CodeQL in the same PR passed). Enabling it via `gh api` was correctly blocked as an unauthorized persistent shared-repo settings change. **It's a human/settings step.** The action is advisory (non-blocking) so it doesn't gate merges. → wants a `human`-labelled ticket (see H9).
+
+### H9 — Enabling persistent repo security settings is permission-gated → raise a `human` ticket
+Toggling Dependency graph / Dependabot vulnerability-alerts / (any Settings › Security switch) is a persistent shared-repo change the agent is (rightly) blocked from making autonomously. **Avoid next round:** create a `human`-labelled ticket at planning for the repo-settings toggles (dependency graph, Dependabot security updates, branch protection on `main` — the last is OSK-17), so the agent wires the *consumption* (workflows) and the human flips the *settings*. Mirrors the human-secret split.
+
 ## Round-1 progress ledger (Sprint 1 — Foundation)
-Done (merged to `main`): **OSK-14** (mono-repo) · **OSK-31** (Spring Boot `/health` skeleton) · **OSK-43** (web nginx image) · **OSK-12** (CI PR workflow) · **OSK-26** (ADRs + ARCHITECTURE + SECURITY). Findings on OSK-88 (false-root) + OSK-203 (rootless-by-design). Next: sequence the `backend/` set behind CI; fan out remaining disjoint `.github/` + root tickets.
+Done (8, merged to `main`): **OSK-14** (mono-repo) · **OSK-31** (`/health` skeleton) · **OSK-43** (web nginx image) · **OSK-12** (CI PR workflow) · **OSK-26** (ADRs + ARCHITECTURE + SECURITY) · **OSK-37** (multi-stage backend Dockerfile) · **OSK-24** (CodeQL + dep-review + Dependabot) · **OSK-34** (gitleaks + secret-remediation). Delivered via 2 dynamic parallel workflows (wave-2a, wave-2b). Findings: OSK-88 (false-root), OSK-203 (rootless-by-design), F7 (dependency-graph human step).
+Next: the **contended `backend/` sequence** (share `backend/pom.xml`+config, so serialize): OSK-27 (profiles+config validation) · OSK-39 (RFC-7807 errors) · OSK-50 (Actuator) · OSK-57 (springdoc) · OSK-18 (`/api/v1`) · OSK-23 (security headers) · OSK-49 (Spotless — also flips CI lint on). Then OSK-88 (now truly buildable), OSK-16 (coverage gate), OSK-21 (repo hygiene), and the wave-3+ CD/infra tickets.
 
 ---
 
