@@ -74,3 +74,69 @@ locally, in the pre-commit hook, and in CI, so they can never disagree.
 - CI/`./mvnw verify` runs `spotless:check` and fails on any unformatted file.
 - Install the pre-commit hooks (recommended): `pip install pre-commit && pre-commit install`.
   They run Spotless + whitespace hygiene on staged files and block a bad commit.
+
+## Supply-chain: SHA-pinned Actions & SBOM
+
+We harden the CI/CD supply chain in two ways (OSK-40): every third-party GitHub
+Action is pinned to an immutable commit SHA, and every backend build emits a
+CycloneDX Software Bill of Materials (SBOM).
+
+### Why Actions are pinned to a SHA (not a tag)
+
+A tag like `@v4` is a *moving* pointer: whoever controls the action's repo can
+re-point it at new code at any time. If a maintainer's account or the tag is
+compromised, `@v4` can silently start running attacker code inside our CI — with
+our repo checkout and (on `main`) our GCP credentials in scope. A full 40-char
+commit SHA is immutable: it always resolves to the exact tree we reviewed, so a
+re-pointed tag can't change what runs. Every `uses:` in `.github/workflows/*.yml`
+therefore references a SHA, with a trailing `# vX.Y.Z` comment recording the
+human-readable version the SHA corresponds to:
+
+```yaml
+uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+```
+
+(Local `uses: ./…` actions and `docker://` refs are exempt — they aren't fetched
+from a mutable upstream tag.)
+
+### How to update a pinned Action
+
+1. Find the SHA the new tag points to (core GitHub API — cheap, no `gh search`):
+   ```bash
+   gh api repos/<owner>/<repo>/commits/<new-tag> --jq .sha
+   # e.g. gh api repos/actions/checkout/commits/v4.2.3 --jq .sha
+   ```
+2. Replace the old 40-char SHA with the new one in every workflow that uses it.
+3. Update the trailing `# vX.Y.Z` comment to the new version so it stays honest.
+4. Verify nothing slipped back to a moving tag — this must print nothing:
+   ```bash
+   grep -rnE "uses: [^.].*@[^ ]" .github/workflows/ | grep -vE "@[0-9a-f]{40}"
+   ```
+
+### The SBOM: what's in my build?
+
+The backend build produces a CycloneDX SBOM via the
+[`cyclonedx-maven-plugin`](https://github.com/CycloneDX/cyclonedx-maven-plugin)
+declared in `backend/pom.xml`. Its `makeAggregateBom` goal is bound to the
+`package` phase, so any `./mvnw package` or `./mvnw verify` writes:
+
+- `backend/target/bom.json` — CycloneDX **JSON** (the machine-readable one)
+- `backend/target/bom.xml` — the same BOM in CycloneDX XML
+
+CI uploads these on every run as the **`sbom-cyclonedx`** build artifact (see the
+"Upload CycloneDX SBOM" step in `.github/workflows/ci.yml`) — download it from
+the Actions run summary.
+
+The SBOM is the authoritative "what's actually in this build?" list: every
+resolved dependency with its group, artifact, version and license. Use it for
+**CVE triage** — when an advisory drops for some library, grep the JSON for the
+package/version instead of guessing from the POM:
+
+```bash
+# Is a given dependency (and which version) in the build?
+jq -r '.components[] | "\(.group):\(.name)@\(.version)"' backend/target/bom.json | sort
+jq -r '.components[] | select(.name=="jackson-databind") | .version' backend/target/bom.json
+```
+
+Because it's the *resolved* graph, it includes transitive dependencies the POM
+never names directly — which is exactly where supply-chain CVEs tend to hide.
