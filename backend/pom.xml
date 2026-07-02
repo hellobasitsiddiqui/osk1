@@ -97,6 +97,22 @@
 			<version>9.9.0</version>
 		</dependency>
 
+		<!-- Resilience4j (OSK-65): graceful degradation for the ONE outbound
+		     dependency — Firebase Admin SDK token verification, behind the
+		     TokenVerifier seam. The Spring Boot 3 starter brings CircuitBreaker +
+		     Retry + TimeLimiter and auto-configures their registries from the
+		     resilience4j.* keys in application.yml. We compose them programmatically
+		     in ResilientTokenVerifier (not via annotations) so a hung/failing verify
+		     is time-limited, retried with bounded backoff, and fast-failed by an open
+		     breaker into a 503 — instead of piling up threads on a hung request. NOT
+		     managed by the Boot parent, so the version is pinned explicitly (kept
+		     current with Boot 3.5.x). -->
+		<dependency>
+			<groupId>io.github.resilience4j</groupId>
+			<artifactId>resilience4j-spring-boot3</artifactId>
+			<version>2.3.0</version>
+		</dependency>
+
 		<!-- Persistence (OSK-32): Spring Data JPA / Hibernate. We keep the ORM even
 		     though there are no entities yet — Hibernate runs in `validate` mode and
 		     asserts the (currently empty) mapping matches the Flyway-built schema, so
