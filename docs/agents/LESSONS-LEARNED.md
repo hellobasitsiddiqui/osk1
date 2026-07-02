@@ -26,6 +26,14 @@ Author: `claude-opus-4.8` (osk1 autonomous fleet / orchestrator). First entry: 2
 `KICKOFF.md` says *"the `agents-at-work` plugin, pinned baseline **v0.2.0**"*, but `hellobasitsiddiqui/agents-at-work` only offered **v0.1.0**, which is what installed. The v0.1.0 skills/docs/hooks were used for this run.
 - **Fix:** either tag/publish v0.2.0 in the marketplace, or correct the KICKOFF pin to the version that actually exists so the run isn't operating off a phantom baseline.
 
+### F5 — `trunk` is a protected branch; can't be deleted after the rename
+After reconciling the default to `main`, `git push origin --delete trunk` was rejected (`protected branch hook declined`). The default flipped to `main` fine (AC met), but the stale `trunk` branch remains. Cleaning it up + moving branch protection onto `main` is **OSK-17's** (Branch strategy + protection) scope — not touched here to avoid stepping on that ticket.
+
+### F6 — Board workflow has no "In Review" status
+The OSK workflow is **To Do → In Progress → Done** only. The jira-task-claim / DoD protocol says "transition → In Review" after a PR, which is impossible here.
+- **Handling used:** keep the ticket **In Progress** and post a `PR: <url>` comment as the review-ready signal; move to **Done** only when a human merges.
+- **Fix:** either add an "In Review" status to the OSK workflow, or update the engine protocol/DoD to define the review-ready signal for a 3-state board (In Progress + `PR:` comment) so agents don't try an impossible transition.
+
 ### F4 — Repo default branch is `trunk`, but OSK-14 AC + engine convention say `main`
 This repo was seeded with default branch `trunk` (`origin/HEAD → trunk`), but OSK-14's AC requires *"The default branch is `main`"* and the engine's own lesson says *"`main` is the integration branch"* — and the fleet's "Done = merged to **main**" language assumes `main`.
 - **Decision (as owner):** reconcile to `main` while building OSK-14 (rename `trunk` → `main`, retarget default), OR keep `trunk` and amend the convention. Recorded here; resolution noted in the OSK-14 PR.
@@ -48,4 +56,30 @@ A `/resume` that reports "still running as a background agent" plus a fresh "go"
 
 ---
 
-_Living document — append a dated finding/lesson whenever the fleet teaches one; fold the durable ones out via docs PRs._
+---
+
+## HITL interventions → lessons (standing directive: capture EVERY human-in-the-loop so we don't repeat it)
+
+Every time a human had to step in this round, the goal is to make that intervention unnecessary next round — by pre-config, automation, or folding the fix into a ticket/seed. Verbatim prompts live in `PROMPT-LOG.md`; the *why + how-to-avoid* live here.
+
+### H1 — Human had to sort out run permissions ("shortcut for uninterrupted run"; the prior session asked how to run with all permissions) — 2026-07-02
+The run stalled on per-action permission prompts. **Avoid next round:** pre-configure the run's permissions before "go" — a `.claude/settings.json` allowlist (git, `gh`, the Jira MCP writes) or an explicit bypass mode — so the fleet doesn't pause on every tool call. Decide solo-orchestrator vs one-of-fleet up front (see H4).
+
+### H2 — Jira write blocked by the auto-mode classifier; human had to authorize ("put all your findings on the tickets as comments…") — 2026-07-02 18:01
+Posting a `[finding]` comment to a ticket the agent didn't create was denied as an unauthorized external-system write, stalling the **mandatory** bug/finding feedback loop. **Avoid next round:** pre-authorize Jira comment + transition writes for the fleet run (permission rule for `mcp__*atlassian*` writes), since KICKOFF makes finding-feedback and status transitions mandatory — they must not require a human tap each time.
+
+### H3 — Human had to flag the interrupted session ("you can reclaim osk14 the session was interrupted") — 2026-07-02 18:02
+OSK-14 sat In Progress with staged-but-uncommitted work in a shared working tree; the orchestrator waited instead of reclaiming. **Avoid next round:** auto-detect a **stale claim** — status In Progress + no pushed branch/PR + claim timestamp older than a threshold ⇒ reclaimable — and reclaim without a human prompt. And don't run two agents in one working tree (see L3); use per-ticket worktrees.
+
+### H4 — Human had to assign the role ("you are the main orchestrator and the owner") — 2026-07-02 18:02
+Ambiguity about whether this session was one-of-fleet or the sole driver caused it to play safe and idle. **Avoid next round:** the KICKOFF/run-config should name the run's role explicitly (solo orchestrator+owner vs. one worker of N) so the agent knows whether it may reclaim, rename branches, and drive the whole board.
+
+### H5 — Owner had to approve the commit + `trunk`→`main` rename — 2026-07-02 18:05
+The seed repo's default branch (`trunk`) contradicted OSK-14's AC and the engine convention (`main`), forcing an owner decision + a mid-run branch rename. **Avoid next round (fold into the seed):** seed the round repo with default branch **`main`** from the start (or make OSK-14's AC say `trunk`) so the two agree and no rename/decision is needed. This is the "fold the root cause back so a replay can't reintroduce it" rule applied to repo seeding.
+
+### H6 — Standing directive: "keep adding all HITL as lessons so we not repeat them" — 2026-07-02 18:12
+This section is now mandatory: append a dated H-entry for **every** human intervention (prompt, approval, correction, unblock) with its avoid-next-round fix. Durable ones (H1/H2 permissions, H3 stale-claim reclaim, H4 role, H5 seed-branch) flow OUT to the engine `docs/agents/agentic-lessons.md`.
+
+---
+
+_Living document — append a dated finding/lesson whenever the fleet teaches one; fold the durable ones out via docs PRs. **Every HITL intervention gets an H-entry above (H6).**_
