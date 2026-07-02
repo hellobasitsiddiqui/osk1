@@ -1,0 +1,8 @@
+# Merge drivers (OSK — reduce parallel-wave rebase friction; see docs/agents/LESSONS-LEARNED.md L9).
+#
+# `.env.example` is an APPEND-ONLY reference list — parallel tickets each append their
+# own env-var block at the end. A union merge keeps both sides' additions automatically
+# so a rebase never stops on a trivial end-of-file conflict. Use union ONLY for files
+# where line order is irrelevant and both sides' lines should always be kept; NEVER for
+# structured formats (application.yml, pom.xml) where interleaving would break syntax.
+.env.example merge=union
