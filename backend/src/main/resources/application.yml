@@ -29,6 +29,16 @@ server:
 app:
   environment-name: local
   public-base-url: http://localhost:8080
+  # --- API rate limiting (OSK-63) ----------------------------------------------
+  # Per-client token bucket on /api/** for abuse/DoS protection, bound + validated
+  # via RateLimitProperties (app.rate-limit.*). Defaults below = 100 requests/minute
+  # per client with a burst of 100; each value is env-overridable so operators can
+  # tune limits without a rebuild. /health, /actuator/** and readiness are exempt.
+  rate-limit:
+    enabled: ${APP_RATE_LIMIT_ENABLED:true}
+    capacity: ${APP_RATE_LIMIT_CAPACITY:100}
+    refill-tokens: ${APP_RATE_LIMIT_REFILL_TOKENS:100}
+    refill-period: ${APP_RATE_LIMIT_REFILL_PERIOD:1m}
 
 # --- Actuator (ops surface, OSK-50) --------------------------------------------
 # Expose only health/info/metrics over HTTP. health is public (liveness/readiness
