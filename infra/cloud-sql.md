@@ -26,6 +26,17 @@ unset PW
 gcloud secrets add-iam-policy-binding $SECRET \
   --member="serviceAccount:476227744481-compute@developer.gserviceaccount.com" \
   --role=roles/secretmanager.secretAccessor --project=$PROJECT
+
+# OSK-133 — the SAME runtime SA must also be able to sign Firebase *custom tokens*: the
+# email-code verify path mints one via FirebaseAuth.createCustomToken. On Cloud Run the
+# Admin SDK uses ADC (no private key), so it signs via the IAM Credentials signBlob API —
+# which requires the runtime SA to hold Token Creator ON ITSELF (a self-binding). Without
+# it, custom-token signing is denied => 500 on the first email-code verify. (Firebase
+# custom-token signing for the email-code auth path; origin TM-234/TM-272.)
+gcloud iam service-accounts add-iam-policy-binding \
+  476227744481-compute@developer.gserviceaccount.com \
+  --member="serviceAccount:476227744481-compute@developer.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator" --project=$PROJECT
 ```
 
 **Connection (prod)**: `application-prod.yml` uses
