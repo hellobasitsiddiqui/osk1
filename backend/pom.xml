@@ -50,6 +50,15 @@
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 
+		<!-- springdoc (OSK-57): auto-generated OpenAPI spec (/v3/api-docs) +
+		     Swagger UI (/swagger-ui). Not managed by the Boot parent, so pin the
+		     version explicitly (kept current with Boot 3.5.x). -->
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+			<version>2.8.6</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>

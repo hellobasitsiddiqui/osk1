@@ -43,3 +43,16 @@ info:
   app:
     name: ${spring.application.name}
     environment: ${app.environment-name}
+
+# --- springdoc / OpenAPI (OSK-57) ----------------------------------------------
+# Swagger UI at /swagger-ui, spec JSON at /v3/api-docs. Enabled in non-prod; the
+# prod profile disables the UI + spec endpoint so the interactive explorer is not
+# on the public surface (application-prod.yml). These paths are permit-listed by
+# the security config (OSK-28).
+springdoc:
+  swagger-ui:
+    path: /swagger-ui
+    enabled: true
+  api-docs:
+    path: /v3/api-docs
+    enabled: true

@@ -14,3 +14,11 @@ spring:
     url: ${DB_URL:}
     username: ${DB_USERNAME:}
     password: ${DB_PASSWORD:}
+
+# API docs are NOT exposed in prod — keep the interactive explorer off the public
+# surface. The spec can still be generated at build time for the drift check (OSK-88).
+springdoc:
+  swagger-ui:
+    enabled: false
+  api-docs:
+    enabled: false
