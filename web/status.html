@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<!--
+  status.html — OpenSkeleton public status / uptime page (OSK-96, banner cut).
+
+  Modelled on https://status.firebase.google.com/cloud-messaging/ : an overall
+  outage banner up top, a per-component breakdown, and (later) latency +
+  availability charts. This is the BANNER CUT — the live outage banner ships now;
+  the Cloud Monitoring charts are scaffolded as graceful placeholders and are a
+  deferred follow-up (see the "Metrics" section and the PR body).
+
+  Design choices (mirrors web/index.html so the two pages read as one product):
+  - Fully self-contained: inlined CSS + JS, ZERO external requests (no fonts, no
+    CDN, no analytics). Same dark palette / typography as index.html.
+  - Public + unauthenticated: this page requires no login and calls only PUBLIC
+    endpoints — the backend's /health and a same-origin reachability probe.
+  - No secrets, no internal infra detail (AC5): the page never prints the backend
+    URL, tokens, hostnames, or any config value. It shows component *status words*
+    only. The backend base URL is read from config.js at runtime (never hardcoded)
+    exactly like index.html does for /version — but is deliberately NOT rendered.
+  - Graceful degradation (AC4): every network probe is wrapped with a timeout and
+    a catch, so an unreachable backend/metrics source can never blank the page —
+    the banner and components always render, worst case as "unavailable".
+
+  Routing: reachable at the clean path "/status" via a Firebase Hosting rewrite
+  ("/status" -> "/status.html", added to firebase.json ahead of the SPA catch-all)
+  and also directly at "/status.html". index.html links here from its footer.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenSkeleton Status</title>
+    <!--
+      Runtime API config, loaded exactly as index.html loads it: a plain
+      (non-module, non-hashed) script so CD can inject the real backend URL at
+      DEPLOY time without rebuilding the page. We read apiBaseUrl from here to
+      poll the backend /health; we never render its value. See web/config.js.
+    -->
+    <script src="/config.js"></script>
+    <style>
+      /* Shared palette with index.html, plus status colours drawn from the same
+         GitHub Primer family the base page already uses (#0d1117 etc.) so green/
+         amber/red sit naturally in the dark theme. */
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --accent: #4c8bf5;
+        --muted: #8b949e;
+        --border: #30363d;
+        --panel: #161b22;
+        --ok: #3fb950; /* green  — operational */
+        --warn: #d29922; /* amber  — degraded    */
+        --down: #f85149; /* red    — outage       */
+        --pending: #8b949e; /* grey — still checking */
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background: radial-gradient(circle at 50% 0%, #161b22 0%, var(--bg) 60%);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        line-height: 1.5;
+        padding: 2rem 1.25rem 3rem;
+      }
+      .wrap { max-width: 44rem; margin: 0 auto; }
+
+      /* --- Header (logo + title), echoing index.html's brand mark ----------- */
+      .head { display: flex; align-items: center; gap: 0.9rem; margin-bottom: 1.5rem; }
+      .logo {
+        width: 48px; height: 48px; flex: 0 0 auto;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--accent), #7c3aed);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.3rem; font-weight: 700; color: #fff;
+      }
+      h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.02em; }
+      .sub { color: var(--muted); margin: 0.15rem 0 0; font-size: 0.9rem; }
+
+      /* --- Overall status banner (the headline signal) --------------------- */
+      .banner {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem;
+        border: 1px solid var(--border);
+        border-left-width: 5px;
+        border-radius: 10px;
+        padding: 1rem 1.15rem;
+        background: var(--panel);
+        margin-bottom: 1.75rem;
+      }
+      /* State classes set the left accent + dot colour. Default = pending. */
+      .banner { border-left-color: var(--pending); }
+      .banner--ok   { border-left-color: var(--ok); }
+      .banner--warn { border-left-color: var(--warn); }
+      .banner--down { border-left-color: var(--down); }
+      .banner__dot {
+        width: 12px; height: 12px; border-radius: 50%;
+        flex: 0 0 auto; background: var(--pending);
+      }
+      .banner--ok   .banner__dot { background: var(--ok); }
+      .banner--warn .banner__dot { background: var(--warn); }
+      .banner--down .banner__dot { background: var(--down); }
+      .banner__text { font-size: 1.1rem; font-weight: 600; }
+      .banner__time { color: var(--muted); font-size: 0.8rem; margin-left: auto; }
+
+      /* --- Panels (Components, Metrics) ------------------------------------ */
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        padding: 1.1rem 1.25rem;
+        margin-bottom: 1.25rem;
+      }
+      .panel h2 {
+        font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--muted); margin: 0 0 0.85rem; font-weight: 600;
+      }
+
+      /* --- Component rows -------------------------------------------------- */
+      .components { list-style: none; margin: 0; padding: 0; }
+      .component {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0.6rem 0; border-top: 1px solid var(--border);
+      }
+      .component:first-child { border-top: 0; }
+      .component__name { font-size: 0.95rem; }
+      .component__status { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--pending); }
+      .dot--ok { background: var(--ok); }
+      .dot--warn { background: var(--warn); }
+      .dot--down { background: var(--down); }
+      .component__label { color: var(--muted); min-width: 6.5rem; text-align: right; }
+
+      /* --- Metrics / chart placeholders (deferred follow-up) --------------- */
+      .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+      @media (max-width: 34rem) { .charts { grid-template-columns: 1fr; } }
+      .chart {
+        border: 1px dashed var(--border);
+        border-radius: 8px;
+        padding: 0.9rem 1rem 1.1rem;
+        background: #0d1117;
+      }
+      .chart h3 { margin: 0 0 0.15rem; font-size: 0.95rem; }
+      .chart__unit { color: var(--muted); font-size: 0.75rem; margin: 0 0 0.9rem; }
+      /* Skeleton "chart" area: a flat baseline that reads as a chart shell without
+         implying any real data. Swapped for a real chart when metrics activate. */
+      .chart__placeholder {
+        height: 88px; border-radius: 6px;
+        background:
+          linear-gradient(var(--panel), var(--panel)) 0 100% / 100% 1px no-repeat,
+          repeating-linear-gradient(90deg, transparent 0 22px, rgba(139,148,158,0.08) 22px 23px);
+        display: flex; align-items: center; justify-content: center;
+      }
+      .chart__msg { color: var(--muted); font-size: 0.8rem; text-align: center; padding: 0 0.5rem; }
+
+      /* --- Footer --------------------------------------------------------- */
+      .foot {
+        display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+        margin-top: 1.5rem; color: var(--muted); font-size: 0.8rem;
+      }
+      .foot a { color: var(--accent); text-decoration: none; }
+      .foot a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="head">
+        <div class="logo" aria-hidden="true">OS</div>
+        <div>
+          <h1>OpenSkeleton Status</h1>
+          <p class="sub">Live health of the OpenSkeleton web and backend services.</p>
+        </div>
+      </header>
+
+      <!--
+        Overall banner. aria-live=polite so the state change is announced to
+        assistive tech when the poll resolves. Starts in the neutral "pending"
+        state and is upgraded to ok/warn/down by the poll below — so even if the
+        script somehow fails, the page still shows a sane, non-broken banner (AC4).
+      -->
+      <section id="banner" class="banner" role="status" aria-live="polite">
+        <span class="banner__dot" aria-hidden="true"></span>
+        <span class="banner__text" id="banner-text">Checking service status…</span>
+        <span class="banner__time" id="banner-time"></span>
+      </section>
+
+      <!-- Per-component breakdown. Only status WORDS are shown — no URLs/hosts. -->
+      <section class="panel">
+        <h2>Components</h2>
+        <ul class="components" id="components">
+          <li class="component" id="cmp-web">
+            <span class="component__name">Web (Firebase Hosting)</span>
+            <span class="component__status">
+              <span class="dot" aria-hidden="true"></span>
+              <span class="component__label">Checking…</span>
+            </span>
+          </li>
+          <li class="component" id="cmp-backend">
+            <span class="component__name">Backend API</span>
+            <span class="component__status">
+              <span class="dot" aria-hidden="true"></span>
+              <span class="component__label">Checking…</span>
+            </span>
+          </li>
+        </ul>
+      </section>
+
+      <!--
+        METRICS — latency + availability charts.
+
+        DEFERRED FOLLOW-UP: the real charts need a Cloud Monitoring read path +
+        IAM (a query API / service account or exported metrics) which is not
+        available yet. Rather than invent a fake data source, we render clean
+        "metrics unavailable" placeholders. The activation seam is renderMetrics()
+        below: point config.js's (future) `metricsUrl` at the read path and swap
+        the placeholder for a real chart render — no restructure of this page.
+      -->
+      <section class="panel">
+        <h2>Metrics</h2>
+        <div class="charts">
+          <div class="chart" id="chart-availability">
+            <h3>Availability</h3>
+            <p class="chart__unit">Uptime, last 24h</p>
+            <div class="chart__placeholder">
+              <span class="chart__msg" id="msg-availability">Metrics unavailable — charts coming soon</span>
+            </div>
+          </div>
+          <div class="chart" id="chart-latency">
+            <h3>Response latency</h3>
+            <p class="chart__unit">/health p50, last 24h</p>
+            <div class="chart__placeholder">
+              <span class="chart__msg" id="msg-latency">Metrics unavailable — charts coming soon</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <a href="/">&larr; OpenSkeleton home</a>
+        <span id="refresh-note">Auto-refreshes every 30s from the public /health endpoint.</span>
+      </footer>
+    </main>
+
+    <script>
+      // OSK-96 — live status logic. Vanilla JS, no dependencies. Polls the public
+      // backend /health plus a same-origin web reachability probe, rolls the two
+      // component statuses up into the overall banner, and repeats every 30s.
+      // Every probe times out and catches, so nothing here can blank the page (AC4).
+      (function () {
+        "use strict";
+
+        var cfg = window.__APP_CONFIG__ || {};
+        var POLL_MS = 30000; // re-poll cadence
+        var TIMEOUT_MS = 6000; // per-probe abort so a dead host can't hang the UI
+
+        // Component status vocabulary. Ordered worst-first so we can roll up by
+        // taking the "worst" of the components for the overall banner.
+        var DOWN = "down";
+        var DEGRADED = "degraded";
+        var OK = "ok";
+
+        // Human labels + dot/banner classes per status.
+        var LABELS = { ok: "Operational", degraded: "Degraded", down: "Unavailable" };
+        var DOT_CLASS = { ok: "dot--ok", degraded: "dot--warn", down: "dot--down" };
+
+        function byId(id) { return document.getElementById(id); }
+
+        // fetch() with a hard timeout via AbortController, so an unreachable or
+        // slow host resolves to a failure fast instead of leaving a probe pending.
+        function fetchWithTimeout(url, opts) {
+          var controller = ("AbortController" in window) ? new AbortController() : null;
+          var timer = controller ? setTimeout(function () { controller.abort(); }, TIMEOUT_MS) : null;
+          var options = Object.assign({ cache: "no-store" }, opts || {});
+          if (controller) { options.signal = controller.signal; }
+          return fetch(url, options).finally(function () {
+            if (timer) { clearTimeout(timer); }
+          });
+        }
+
+        // WEB probe: the page is served by Firebase Hosting, so the web tier is up
+        // by definition. We still re-fetch a small same-origin file (config.js,
+        // marked no-cache in firebase.json) as a live heartbeat. A failed probe is
+        // DEGRADED, never DOWN — you are demonstrably still being served this page,
+        // so a transient miss is a wobble, not a full web outage.
+        function probeWeb() {
+          var url = location.origin + "/config.js?_=" + Date.now();
+          return fetchWithTimeout(url)
+            .then(function (r) { return r.ok ? OK : DEGRADED; })
+            .catch(function () { return DEGRADED; });
+        }
+
+        // BACKEND probe: poll the PUBLIC, unauthenticated /health. apiBaseUrl is the
+        // deploy-injected backend URL (or "" same-origin until the backend deploys).
+        // Trailing slash trimmed so we never build "//health". Mirrors index.html's
+        // cross-origin /version fetch (Accept is a CORS-safelisted header, so no
+        // preflight); any CORS/network/timeout failure lands in .catch -> DOWN.
+        //   UP status          -> OK
+        //   reachable, not "UP" -> DEGRADED
+        //   non-2xx / non-JSON  -> DOWN  (e.g. Hosting's HTML fallback when
+        //                                 apiBaseUrl is "" and no backend exists)
+        //   network/timeout/CORS-> DOWN
+        function probeBackend() {
+          var base = (cfg.apiBaseUrl || "").replace(/\/+$/, "");
+          return fetchWithTimeout(base + "/health", { headers: { Accept: "application/json" } })
+            .then(function (r) {
+              if (!r.ok) { return DOWN; }
+              var ct = r.headers.get("content-type") || "";
+              if (ct.indexOf("json") === -1) { return DOWN; } // not the JSON API
+              return r.json().then(function (body) {
+                if (body && body.status === "UP") { return OK; }
+                if (body && body.status) { return DEGRADED; } // reachable but unhealthy
+                return DOWN;
+              });
+            })
+            .catch(function () { return DOWN; });
+        }
+
+        // Roll two component statuses up into the overall banner state.
+        // Standard status-page "worst component wins" rule:
+        //   any DOWN     -> outage (red)
+        //   else any DEGRADED -> degraded (amber)
+        //   else all OK  -> available (green)
+        function overallOf(statuses) {
+          if (statuses.indexOf(DOWN) !== -1) { return DOWN; }
+          if (statuses.indexOf(DEGRADED) !== -1) { return DEGRADED; }
+          return OK;
+        }
+
+        var BANNER = {
+          ok:       { cls: "banner--ok",   text: "All systems operational" },
+          degraded: { cls: "banner--warn", text: "Degraded performance" },
+          down:     { cls: "banner--down", text: "Service outage" }
+        };
+
+        // Paint one component row: swap the dot colour + status word.
+        function paintComponent(id, status) {
+          var row = byId(id);
+          if (!row) { return; }
+          var dot = row.querySelector(".dot");
+          var label = row.querySelector(".component__label");
+          if (dot) { dot.className = "dot " + DOT_CLASS[status]; }
+          if (label) { label.textContent = LABELS[status]; }
+        }
+
+        // Paint the overall banner + "as of" timestamp.
+        function paintBanner(status) {
+          var banner = byId("banner");
+          var text = byId("banner-text");
+          var time = byId("banner-time");
+          if (banner) { banner.className = "banner " + BANNER[status].cls; }
+          if (text) { text.textContent = BANNER[status].text; }
+          if (time) {
+            var now = new Date();
+            time.textContent = "as of " + now.toLocaleTimeString();
+            time.setAttribute("datetime", now.toISOString());
+          }
+        }
+
+        // One poll cycle: probe both components in parallel, paint everything.
+        function poll() {
+          return Promise.all([probeWeb(), probeBackend()]).then(function (results) {
+            var web = results[0];
+            var backend = results[1];
+            paintComponent("cmp-web", web);
+            paintComponent("cmp-backend", backend);
+            paintBanner(overallOf([web, backend]));
+          });
+        }
+
+        // METRICS activation seam (charts deferred). When a Cloud Monitoring read
+        // path exists, config.js will carry a `metricsUrl`; wiring a real chart
+        // render here (fetch series -> draw) needs no change to the page markup.
+        // Until then we leave the clean "metrics unavailable" placeholders as-is.
+        function renderMetrics() {
+          if (!cfg.metricsUrl) {
+            return; // no read path configured yet — placeholders stand (AC3)
+          }
+          // Follow-up: fetch cfg.metricsUrl series and replace the placeholder
+          // nodes (#chart-availability / #chart-latency) with real charts.
+        }
+
+        // Kick off: first poll immediately, then on a fixed interval. poll() never
+        // rejects (both probes swallow their own errors), so the interval is safe.
+        renderMetrics();
+        poll();
+        setInterval(poll, POLL_MS);
+      })();
+    </script>
+  </body>
+</html>
