@@ -82,7 +82,12 @@ jobs:
       - name: Lint / format check
         working-directory: backend
         run: |
-          if ./mvnw -B -ntp help:describe -Dplugin=com.diffplug.spotless:spotless-maven-plugin >/dev/null 2>&1; then
+          # Detect Spotless by whether it is actually declared in the build — grep
+          # the pom. Do NOT use `mvn help:describe -Dplugin=<GAV>`: that resolves the
+          # plugin descriptor from Maven Central and exits 0 even when the plugin is
+          # not in the project, which wrongly triggers `spotless:check` and fails the
+          # job with "No plugin found for prefix 'spotless'".
+          if grep -q 'spotless-maven-plugin' pom.xml; then
             echo "Spotless detected — enforcing formatting."
             ./mvnw -B -ntp -q spotless:check
           else
