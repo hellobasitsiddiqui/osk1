@@ -114,8 +114,14 @@
         </div>
       </footer>
 
-      <!-- OSK-96: link to the public /status page (live health + outage banner). -->
-      <p class="status-link"><a href="/status">Service status &rarr;</a></p>
+      <!-- OSK-96: link to the public /status page (live health + outage banner).
+           OSK-90: and, next to it, a discreet link to the ops panel (operator
+           jump-off page). Both are quiet metadata, styled the same. -->
+      <p class="status-link">
+        <a href="/status">Service status &rarr;</a>
+        &nbsp;&middot;&nbsp;
+        <a href="/ops">Ops panel &rarr;</a>
+      </p>
     </main>
 
     <script>

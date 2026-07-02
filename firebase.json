@@ -17,6 +17,10 @@
         "destination": "/status.html"
       },
       {
+        "source": "/ops",
+        "destination": "/ops.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

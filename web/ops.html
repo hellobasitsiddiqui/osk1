@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<!--
+  ops.html — OpenSkeleton operations panel (OSK-90).
+
+  WHAT: a single "one place to jump to everything" page for an operator/admin. It
+  is a page of grouped, labelled LINKS to the operational / observability surfaces
+  that exist today (backend health, actuator, version, the public status page),
+  plus a small live backend-health indicator. It is a devex/observability
+  convenience page — NOT a data-driven admin console (that is OSK-72, separate).
+
+  Design choices (mirrors web/index.html + web/status.html so all three pages read
+  as one product):
+  - Fully self-contained: inlined CSS + JS, ZERO external requests for assets (no
+    fonts, no CDN, no analytics). Same dark GitHub-Primer palette as the siblings.
+  - Backend links are built at RUNTIME from config.js's apiBaseUrl (never
+    hardcoded), exactly like index.html builds its /version fetch and status.html
+    builds its /health probe. Until the backend deploys, apiBaseUrl is "" and the
+    links resolve same-origin — graceful, nothing loopback ever ships.
+  - No secrets / no internal infra detail leak (AC4): the page never prints tokens,
+    project ids, region names, or an internal-only hostname. The backend base URL
+    is a PUBLIC Cloud Run URL and necessarily lives inside the link hrefs (that is
+    the whole point of a links page) but is deliberately not rendered as prose. The
+    external Source/CI links use only PUBLIC, well-known paths (the public GitHub
+    repo already named by the git remote / PR, and the generic Cloud Run console
+    root with NO project or region in it).
+  - Graceful degradation (AC3): the live health probe is wrapped with a timeout and
+    a catch, so an unreachable backend can never blank the page — the indicator
+    just reads "Unavailable" and every link still renders and is clickable.
+
+  Gating: this page is intentionally UNGATED for now. An admin auth-guard for web
+  protected routes is OSK-74's job and is not built yet; gating this panel behind
+  admin-auth is a follow-up (see the PR body / OSK-74). We do NOT invent an auth
+  mechanism here.
+
+  Routing: reachable at the clean path "/ops" via a Firebase Hosting rewrite
+  ("/ops" -> "/ops.html", added to firebase.json ahead of the SPA catch-all) and
+  also directly at "/ops.html". index.html links here discreetly from its footer.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenSkeleton Operations</title>
+    <!--
+      Runtime API config, loaded exactly as index.html / status.html load it: a
+      plain (non-module, non-hashed) script so CD can inject the real backend URL
+      at DEPLOY time without rebuilding the page. We read apiBaseUrl to build the
+      backend link hrefs and to poll /health; we never render its value. See
+      web/config.js.
+    -->
+    <script src="/config.js"></script>
+    <style>
+      /* Shared palette + surfaces with status.html so the two ops-facing pages are
+         visually identical. Status colours are the same Primer green/amber/red. */
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --accent: #4c8bf5;
+        --muted: #8b949e;
+        --border: #30363d;
+        --panel: #161b22;
+        --ok: #3fb950; /* green — operational */
+        --warn: #d29922; /* amber — degraded    */
+        --down: #f85149; /* red   — unavailable  */
+        --pending: #8b949e; /* grey — still checking */
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background: radial-gradient(circle at 50% 0%, #161b22 0%, var(--bg) 60%);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        line-height: 1.5;
+        padding: 2rem 1.25rem 3rem;
+      }
+      .wrap { max-width: 44rem; margin: 0 auto; }
+
+      /* --- Header (logo + title), echoing index.html's brand mark ----------- */
+      .head { display: flex; align-items: center; gap: 0.9rem; margin-bottom: 1.5rem; }
+      .logo {
+        width: 48px; height: 48px; flex: 0 0 auto;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--accent), #7c3aed);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.3rem; font-weight: 700; color: #fff;
+      }
+      h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.02em; }
+      .sub { color: var(--muted); margin: 0.15rem 0 0; font-size: 0.9rem; }
+
+      /* --- Live backend-health indicator (AC3) ----------------------------- */
+      /* Same visual language as status.html's banner, trimmed to a single line:
+         a coloured dot + a status word + an "as of" timestamp. Starts in the
+         neutral "pending" state so the page is never broken even if JS fails. */
+      .health {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem;
+        border: 1px solid var(--border);
+        border-left-width: 5px;
+        border-left-color: var(--pending);
+        border-radius: 10px;
+        padding: 0.8rem 1.1rem;
+        background: var(--panel);
+        margin-bottom: 1.75rem;
+      }
+      .health--ok   { border-left-color: var(--ok); }
+      .health--warn { border-left-color: var(--warn); }
+      .health--down { border-left-color: var(--down); }
+      .health__dot {
+        width: 11px; height: 11px; border-radius: 50%;
+        flex: 0 0 auto; background: var(--pending);
+      }
+      .health--ok   .health__dot { background: var(--ok); }
+      .health--warn .health__dot { background: var(--warn); }
+      .health--down .health__dot { background: var(--down); }
+      .health__text { font-weight: 600; }
+      .health__time { color: var(--muted); font-size: 0.8rem; margin-left: auto; }
+
+      /* --- Panels (link groups) ------------------------------------------- */
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        padding: 1.1rem 1.25rem;
+        margin-bottom: 1.25rem;
+      }
+      .panel h2 {
+        font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--muted); margin: 0 0 0.35rem; font-weight: 600;
+      }
+      .panel__hint { color: var(--muted); font-size: 0.8rem; margin: 0 0 0.85rem; }
+
+      /* --- Link rows ------------------------------------------------------- */
+      .links { list-style: none; margin: 0; padding: 0; }
+      .link {
+        display: flex; align-items: baseline; justify-content: space-between;
+        gap: 1rem; padding: 0.55rem 0; border-top: 1px solid var(--border);
+      }
+      .link:first-child { border-top: 0; }
+      .link a {
+        color: var(--accent); text-decoration: none; font-size: 0.95rem;
+        font-weight: 500;
+      }
+      .link a:hover { text-decoration: underline; }
+      /* External-link marker (↗) — a quiet cue that the link leaves the app. */
+      .link a[target="_blank"]::after {
+        content: " \2197"; color: var(--muted); font-size: 0.8em;
+      }
+      .link__desc {
+        color: var(--muted); font-size: 0.82rem; text-align: right;
+        flex: 1 1 auto; min-width: 0;
+      }
+      .link__desc code {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+          monospace;
+        font-size: 0.9em; color: var(--fg);
+      }
+
+      /* --- Footer --------------------------------------------------------- */
+      .foot {
+        display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+        margin-top: 1.5rem; color: var(--muted); font-size: 0.8rem;
+      }
+      .foot a { color: var(--accent); text-decoration: none; }
+      .foot a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="head">
+        <div class="logo" aria-hidden="true">OS</div>
+        <div>
+          <h1>OpenSkeleton Operations</h1>
+          <p class="sub">
+            One place to jump to the operational and observability surfaces of the
+            running system.
+          </p>
+        </div>
+      </header>
+
+      <!--
+        Live backend-health indicator (AC3). role=status + aria-live=polite so the
+        resolved state is announced to assistive tech. Starts "Checking…" and is
+        upgraded to Operational / Degraded / Unavailable by the /health poll below.
+        If the poll fails or JS is disabled, this stays a sane, non-broken line.
+      -->
+      <section id="health" class="health" role="status" aria-live="polite">
+        <span class="health__dot" aria-hidden="true"></span>
+        <span class="health__text" id="health-text">Checking backend health…</span>
+        <span class="health__time" id="health-time"></span>
+      </section>
+
+      <!--
+        Backend service — the operational endpoints exposed by the backend today
+        (OSK-50 actuator, OSK-100 /version, the public /health probe). Every href
+        here is built at runtime from config.js's apiBaseUrl (see the script), so
+        the host is never hardcoded. data-ops-path carries the path to append.
+      -->
+      <section class="panel">
+        <h2>Backend service</h2>
+        <p class="panel__hint">Links resolve against the deployed backend base URL.</p>
+        <ul class="links">
+          <li class="link">
+            <a data-ops-path="/health" target="_blank" rel="noopener noreferrer">Health</a>
+            <span class="link__desc">Public liveness/readiness probe — <code>/health</code></span>
+          </li>
+          <li class="link">
+            <a data-ops-path="/version" target="_blank" rel="noopener noreferrer">Version</a>
+            <span class="link__desc">Build SHA + Cloud Run revision — <code>/version</code></span>
+          </li>
+          <li class="link">
+            <a data-ops-path="/actuator" target="_blank" rel="noopener noreferrer">Actuator index</a>
+            <span class="link__desc">Exposed actuator endpoints — <code>/actuator</code></span>
+          </li>
+          <li class="link">
+            <a data-ops-path="/actuator/health" target="_blank" rel="noopener noreferrer">Actuator health</a>
+            <span class="link__desc">Detailed health (auth-gated detail) — <code>/actuator/health</code></span>
+          </li>
+          <li class="link">
+            <a data-ops-path="/actuator/info" target="_blank" rel="noopener noreferrer">Actuator info</a>
+            <span class="link__desc">App name + environment — <code>/actuator/info</code></span>
+          </li>
+          <li class="link">
+            <a data-ops-path="/actuator/metrics" target="_blank" rel="noopener noreferrer">Actuator metrics</a>
+            <span class="link__desc">Micrometer metric names — <code>/actuator/metrics</code></span>
+          </li>
+        </ul>
+      </section>
+
+      <!--
+        Observability — product-owned pages that live on this same web origin, so
+        they are plain relative links (no apiBaseUrl needed).
+      -->
+      <section class="panel">
+        <h2>Observability</h2>
+        <ul class="links">
+          <li class="link">
+            <a href="/status">Public status page</a>
+            <span class="link__desc">Live health + component breakdown — <code>/status</code></span>
+          </li>
+        </ul>
+      </section>
+
+      <!--
+        Source &amp; CI — external jump-offs. These use only PUBLIC, well-known
+        paths and leak nothing internal (AC4):
+          - the public GitHub repo (already named by the git remote / this PR), and
+          - the GENERIC Cloud Run console root, which carries NO project id or
+            region. It just lands a logged-in operator on their Cloud Run list.
+        Nothing here is a secret, an internal-only hostname, or an infra detail.
+      -->
+      <section class="panel">
+        <h2>Source &amp; CI</h2>
+        <ul class="links">
+          <li class="link">
+            <a href="https://github.com/hellobasitsiddiqui/osk1" target="_blank" rel="noopener noreferrer">GitHub repository</a>
+            <span class="link__desc">Source, issues &amp; releases</span>
+          </li>
+          <li class="link">
+            <a href="https://github.com/hellobasitsiddiqui/osk1/actions" target="_blank" rel="noopener noreferrer">GitHub Actions</a>
+            <span class="link__desc">CI / CD workflow runs</span>
+          </li>
+          <li class="link">
+            <a href="https://console.cloud.google.com/run" target="_blank" rel="noopener noreferrer">Cloud Run console</a>
+            <span class="link__desc">Backend service &amp; revisions (login required)</span>
+          </li>
+        </ul>
+      </section>
+
+      <footer class="foot">
+        <a href="/">&larr; OpenSkeleton home</a>
+        <span id="refresh-note">Backend health auto-refreshes every 30s from /health.</span>
+      </footer>
+    </main>
+
+    <script>
+      // OSK-90 — ops panel logic. Vanilla JS, no dependencies. Two jobs:
+      //   1) build the backend link hrefs from config.js's apiBaseUrl, and
+      //   2) run a small live /health indicator on a 30s poll.
+      // Both degrade gracefully: a missing config or an unreachable backend never
+      // blanks the page (AC3/AC4).
+      (function () {
+        "use strict";
+
+        var cfg = window.__APP_CONFIG__ || {};
+        var POLL_MS = 30000; // health re-poll cadence
+        var TIMEOUT_MS = 6000; // per-probe abort so a dead host can't hang the UI
+
+        // Backend base URL, trailing slash trimmed so we never build "//health".
+        // "" (same-origin) until the backend deploys — then the links resolve on
+        // this origin, which is harmless and correct. Never hardcoded.
+        var base = (cfg.apiBaseUrl || "").replace(/\/+$/, "");
+
+        function byId(id) { return document.getElementById(id); }
+
+        // 1) Wire every backend link's href = base + its data-ops-path. Done once
+        //    on load; if config is missing, base is "" and links stay same-origin.
+        var linkEls = document.querySelectorAll("a[data-ops-path]");
+        for (var i = 0; i < linkEls.length; i++) {
+          linkEls[i].setAttribute("href", base + linkEls[i].getAttribute("data-ops-path"));
+        }
+
+        // --- Live backend health (mirrors status.html's /health probe) --------
+
+        // Human labels + left-accent classes per state.
+        var STATE = {
+          ok:   { cls: "health--ok",   text: "Backend operational" },
+          warn: { cls: "health--warn", text: "Backend degraded" },
+          down: { cls: "health--down", text: "Backend unavailable" }
+        };
+
+        // fetch() with a hard timeout via AbortController, so an unreachable or slow
+        // host resolves to a failure fast instead of leaving the probe pending.
+        function fetchWithTimeout(url, opts) {
+          var controller = ("AbortController" in window) ? new AbortController() : null;
+          var timer = controller ? setTimeout(function () { controller.abort(); }, TIMEOUT_MS) : null;
+          var options = Object.assign({ cache: "no-store" }, opts || {});
+          if (controller) { options.signal = controller.signal; }
+          return fetch(url, options).finally(function () {
+            if (timer) { clearTimeout(timer); }
+          });
+        }
+
+        // Poll the PUBLIC, unauthenticated /health. Accept is a CORS-safelisted
+        // header so there is no preflight, exactly like index.html's /version fetch.
+        //   status "UP"          -> ok
+        //   reachable, not "UP"  -> warn (degraded)
+        //   non-2xx / non-JSON   -> down (e.g. Hosting's HTML fallback when there is
+        //                                  no backend yet)
+        //   network/timeout/CORS -> down
+        function probeBackend() {
+          return fetchWithTimeout(base + "/health", { headers: { Accept: "application/json" } })
+            .then(function (r) {
+              if (!r.ok) { return "down"; }
+              var ct = r.headers.get("content-type") || "";
+              if (ct.indexOf("json") === -1) { return "down"; }
+              return r.json().then(function (body) {
+                if (body && body.status === "UP") { return "ok"; }
+                if (body && body.status) { return "warn"; }
+                return "down";
+              });
+            })
+            .catch(function () { return "down"; });
+        }
+
+        // Paint the indicator: swap the left-accent/dot colour, the status word,
+        // and the "as of" timestamp.
+        function paint(state) {
+          var box = byId("health");
+          var text = byId("health-text");
+          var time = byId("health-time");
+          if (box) { box.className = "health " + STATE[state].cls; }
+          if (text) { text.textContent = STATE[state].text; }
+          if (time) {
+            var now = new Date();
+            time.textContent = "as of " + now.toLocaleTimeString();
+            time.setAttribute("datetime", now.toISOString());
+          }
+        }
+
+        // One poll cycle. probeBackend never rejects (it swallows its own errors),
+        // so the interval is safe to leave running.
+        function poll() {
+          return probeBackend().then(paint);
+        }
+
+        poll();
+        setInterval(poll, POLL_MS);
+      })();
+    </script>
+  </body>
+</html>
