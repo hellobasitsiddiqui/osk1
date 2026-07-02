@@ -25,6 +25,13 @@ app:
 # detail from anonymous callers (so today, with no auth layer yet, /actuator/health
 # returns just {"status":"UP"} and never leaks internals).
 management:
+  # Metrics export to Google Cloud Monitoring is OFF by default so dev/test are a
+  # no-op (having the Stackdriver registry on the classpath would otherwise make
+  # every run try to export to GCP and fail). The prod profile turns it on (OSK-55).
+  stackdriver:
+    metrics:
+      export:
+        enabled: false
   endpoints:
     web:
       exposure:

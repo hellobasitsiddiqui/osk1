@@ -32,3 +32,13 @@ logging:
   structured:
     format:
       console: ecs
+
+# Export metrics to Google Cloud Monitoring under prod (OSK-55), using the runtime
+# service account (Application Default Credentials) — no key file. The GCP project
+# comes from the environment; actual visibility requires a GCP project (OSK-36).
+management:
+  stackdriver:
+    metrics:
+      export:
+        enabled: true
+        project-id: ${GOOGLE_CLOUD_PROJECT:}

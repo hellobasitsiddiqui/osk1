@@ -50,6 +50,13 @@
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 
+		<!-- Micrometer Stackdriver registry (OSK-55): exports metrics to Google
+		     Cloud Monitoring under prod (gated off in dev/test via config). -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-stackdriver</artifactId>
+		</dependency>
+
 		<!-- Micrometer Tracing (OSK-45): puts trace.id/span.id into the logging
 		     MDC per request so every log line is correlatable. Version managed by
 		     the Boot parent. -->
