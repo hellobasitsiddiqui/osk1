@@ -74,6 +74,20 @@
 			<version>2.8.6</version>
 		</dependency>
 
+		<!-- Firebase Admin SDK (OSK-28): server-side verification of the caller's
+		     Firebase ID token. We use ONLY its token-verification surface
+		     (FirebaseAuth.verifyIdToken) to authenticate /api/v1/** requests — no
+		     Firestore/RTDB/messaging usage. The SDK initialises from Application
+		     Default Credentials (ADC) on Cloud Run and an env-pointed service account
+		     locally; NO service-account key is ever committed. Verification is hidden
+		     behind our TokenVerifier seam so tests can mock it without live creds. Not
+		     managed by the Boot parent, so the version is pinned explicitly. -->
+		<dependency>
+			<groupId>com.google.firebase</groupId>
+			<artifactId>firebase-admin</artifactId>
+			<version>9.9.0</version>
+		</dependency>
+
 		<!-- Persistence (OSK-32): Spring Data JPA / Hibernate. We keep the ORM even
 		     though there are no entities yet — Hibernate runs in `validate` mode and
 		     asserts the (currently empty) mapping matches the Flyway-built schema, so
@@ -156,6 +170,13 @@
 						<exclude>**/BackendApplication.class</exclude>
 						<exclude>**/config/OpenApiConfig.class</exclude>
 						<exclude>**/config/MetricsConfig*.class</exclude>
+						<!-- FirebaseTokenVerifier (OSK-28) is the thin adapter that calls
+						     the live Firebase Admin SDK (ADC init + verifyIdToken). It
+						     cannot be meaningfully unit-tested without real credentials
+						     and a genuine signed ID token — which is precisely why the
+						     TokenVerifier seam exists so the rest of the auth path IS
+						     tested with a mock. Exclude only this untestable adapter. -->
+						<exclude>**/auth/FirebaseTokenVerifier.class</exclude>
 					</excludes>
 				</configuration>
 				<executions>
