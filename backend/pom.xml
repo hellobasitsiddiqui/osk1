@@ -35,6 +35,15 @@
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 
+		<!-- Cloud SQL socket-factory connector (OSK-20): lets the app connect to the
+		     Cloud SQL Postgres instance over the secure connector (no public IP) in
+		     prod. Not on the test path (tests use Testcontainers via jdbc:tc). -->
+		<dependency>
+			<groupId>com.google.cloud.sql</groupId>
+			<artifactId>postgres-socket-factory</artifactId>
+			<version>1.28.4</version>
+		</dependency>
+
 		<!-- Bean Validation (Hibernate Validator). Boot's web starter no longer
 		     bundles it, but we need JSR-380 to validate @ConfigurationProperties
 		     (AppProperties) so bad/missing config fails startup fast. -->
