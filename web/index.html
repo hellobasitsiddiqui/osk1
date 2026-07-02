@@ -19,6 +19,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OpenSkeleton</title>
+    <!--
+      Runtime API config. Loaded as a plain (non-module, non-hashed) script so
+      that CD can inject the real backend URL at DEPLOY time without rebuilding
+      the page — the Firebase Hosting deploy rewrites config.js's apiBaseUrl.
+      See web/config.js and .github/workflows/hosting-deploy.yml.
+    -->
+    <script src="/config.js"></script>
     <style>
       /* Simple dark, centered brand card. No external assets by design. */
       :root {

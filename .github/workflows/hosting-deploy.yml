@@ -1,0 +1,206 @@
+# hosting-deploy.yml — Continuous Deployment of the web surface to Firebase
+# Hosting (OSK-13).
+#
+# WHAT: On every push to `main` (i.e. every merge), this workflow ships the
+#       static web assets under web/ to the Firebase Hosting LIVE channel of
+#       site `openskeleton-one`, served over the CDN with automatic TLS on the
+#       Firebase domain (https://openskeleton-one.web.app).
+#
+# WHY push-to-main ONLY (never pull_request): opening or updating a PR must NOT
+#       deploy. A live deploy is a side effect that only a merge should cause.
+#       PR validation of these files is handled by other gates (YAML/lint); this
+#       workflow deliberately has no `pull_request:` trigger so a PR build can
+#       never touch the live channel.
+#
+# AUTH: keyless — GitHub Actions federates to GCP via Workload Identity
+#       Federation (OIDC, OSK-42). No service-account JSON key and no
+#       `firebase login:ci` token. `google-github-actions/auth` writes a
+#       short-lived credential file and exports GOOGLE_APPLICATION_CREDENTIALS,
+#       which both `gcloud` and `firebase-tools` pick up as Application Default
+#       Credentials.
+#
+# TM-128 HARDENING (backend URL injection + fail-closed guard):
+#   The browser reads the backend API base URL from web/config.js at runtime.
+#   The committed value is the LOCAL DEV default (http://127.0.0.1:8080) and must
+#   NEVER reach the live channel (it triggers browser Private Network Access
+#   prompts and a dead /api/v1/me). Before deploying, this workflow:
+#     1) resolves the real backend URL from Cloud Run and rewrites config.js's
+#        apiBaseUrl — or, until the backend exists (OSK-47 pending), neutralises
+#        the loopback default to same-origin ("") so nothing loopback ships; then
+#     2) FAILS the deploy (fail-closed) if a localhost/127.0.0.1 apiBaseUrl is
+#        still present in what would ship.
+#   Post-deploy CORS/PNA smoke (sign-in -> GET /api/v1/me from the live origin)
+#   is owned by OSK-61 and activates once the backend is live.
+#
+# ROLLBACK (documented per AC — see also docs/adr/0002 and web/README.md):
+#   Firebase Hosting keeps every release, so rollback is instant and needs no
+#   rebuild:
+#     * One-liner:  firebase hosting:rollback --project openskeleton-one --site openskeleton-one
+#       (re-points the live channel at the immediately previous release).
+#     * To pick a specific older release, list them and clone the desired one:
+#         firebase hosting:releases:list --project openskeleton-one --site openskeleton-one
+#       or use the Firebase console -> Hosting -> release history -> "Rollback".
+#     * Git-based alternative: revert the offending commit on main; the next push
+#       re-runs this workflow and deploys the reverted assets.
+#
+# SECURITY: every third-party action is pinned to a full commit SHA (never a
+#           moving tag); the trailing "# vX.Y.Z" records the human-readable tag.
+
+name: Deploy web (Firebase Hosting)
+
+# Merge-to-main only. NO pull_request trigger — a PR must never deploy live.
+# workflow_dispatch is included for manual re-deploys and manual rollbacks.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege. id-token: write lets the runner mint the OIDC token that WIF
+# trusts; contents: read is all the checkout needs.
+permissions:
+  contents: read
+  id-token: write
+
+# Never run two live deploys concurrently for the same ref, and don't cancel an
+# in-flight deploy midway (cancel-in-progress: false) — a half-applied Hosting
+# release is worse than waiting.
+concurrency:
+  group: hosting-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy web to Firebase Hosting (live)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Node is needed to install and run the Firebase CLI.
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+
+      # Keyless auth to GCP via Workload Identity Federation (OIDC). Values are
+      # the non-secret identifiers from infra/gcp.env (single source of truth),
+      # matching .github/workflows/deploy-auth-check.yml. This exports
+      # GOOGLE_APPLICATION_CREDENTIALS for the gcloud + firebase steps below.
+      - name: Authenticate to Google Cloud (WIF / OIDC)
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          project_id: openskeleton-one
+          workload_identity_provider: projects/476227744481/locations/global/workloadIdentityPools/github/providers/github-provider
+          service_account: gh-deployer@openskeleton-one.iam.gserviceaccount.com
+
+      # TM-128 step 1: inject the real backend URL into web/config.js, or
+      # neutralise the loopback dev default if the backend isn't deployed yet.
+      - name: Inject backend URL into web config (TM-128)
+        env:
+          # Cloud Run service that serves the backend API (created by OSK-47).
+          # Until it exists, injection is skipped and the loopback default is
+          # neutralised. Keep this name in sync with OSK-47/OSK-61.
+          BACKEND_SERVICE: openskeleton-backend
+        run: |
+          set -euo pipefail
+          # Read the non-secret GCP target from the single source of truth so we
+          # never drift from infra/gcp.env.
+          # shellcheck disable=SC1091
+          . infra/gcp.env
+          CONFIG=web/config.js
+
+          # Resolve the public backend URL from Cloud Run. The `|| true` + empty
+          # check turns "service not found" (OSK-47 pending) into a graceful
+          # skip rather than a hard failure.
+          BACKEND_URL="$(gcloud run services describe "${BACKEND_SERVICE}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --format='value(status.url)' 2>/dev/null || true)"
+
+          if [ -n "${BACKEND_URL}" ]; then
+            echo "Backend resolved from Cloud Run: ${BACKEND_URL} — injecting apiBaseUrl."
+            NEW_URL="${BACKEND_URL}"
+          else
+            echo "::notice::Backend service '${BACKEND_SERVICE}' not found in ${GCP_PROJECT_ID}/${GCP_REGION} — skipping real backend-URL injection (activates once OSK-47 deploys the backend). Neutralising the loopback dev default so nothing localhost ships."
+            # Same-origin / to-be-configured. NOT a hardcoded host, and NOT loopback.
+            NEW_URL=""
+          fi
+
+          # Rewrite the apiBaseUrl string literal with node (already set up
+          # above). node is used instead of sed to avoid any shell/sed escaping
+          # of the URL and BSD-vs-GNU sed differences: the value is passed via an
+          # env var, never interpolated into a pattern. Fails loudly if the
+          # apiBaseUrl key is missing (so a config refactor can't silently skip
+          # the injection). An empty NEW_URL yields apiBaseUrl: "".
+          CONFIG="${CONFIG}" NEW_URL="${NEW_URL}" node -e '
+            const fs = require("fs");
+            const p = process.env.CONFIG;
+            const url = process.env.NEW_URL || "";
+            const re = /(apiBaseUrl:\s*")[^"]*(")/;
+            let s = fs.readFileSync(p, "utf8");
+            if (!re.test(s)) {
+              console.error("::error::apiBaseUrl not found in " + p);
+              process.exit(1);
+            }
+            s = s.replace(re, "$1" + url + "$2");
+            fs.writeFileSync(p, s);
+            console.log("Wrote apiBaseUrl=" + JSON.stringify(url) + " to " + p);
+          '
+          echo "config.js apiBaseUrl is now:"
+          grep -n 'apiBaseUrl' "${CONFIG}"
+
+      # TM-128 step 2: fail-closed. A dev-default backend URL reaching the live
+      # channel is a PIPELINE failure, not a user-facing bug — block the deploy.
+      - name: Guard — no localhost/127.0.0.1 apiBaseUrl may ship
+        run: |
+          set -euo pipefail
+          # Inspect the apiBaseUrl VALUE specifically (not the whole file): the
+          # config's own comments legitimately mention 127.0.0.1/localhost as
+          # documentation, so a full-file grep would false-positive. Extract the
+          # string literal and fail-closed if it is a loopback/dev host.
+          node -e '
+            const fs = require("fs");
+            const p = "web/config.js";
+            const m = fs.readFileSync(p, "utf8").match(/apiBaseUrl:\s*"([^"]*)"/);
+            if (!m) {
+              console.error("::error::apiBaseUrl not found in " + p);
+              process.exit(1);
+            }
+            const v = m[1];
+            console.log("Deployed apiBaseUrl value: " + JSON.stringify(v));
+            if (/127\.0\.0\.1|localhost|::1|0\.0\.0\.0/i.test(v)) {
+              console.error("::error::Refusing to deploy — apiBaseUrl is a loopback/dev value (" + v + "). The backend-URL injection did not run or did not apply. A dev default must never reach the live channel (PNA prompts + dead /api/v1/me).");
+              process.exit(1);
+            }
+            console.log("Guard passed: apiBaseUrl is not a loopback/dev host.");
+          '
+
+      # Pin the Firebase CLI to an exact version for reproducible deploys.
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools@15.22.4
+
+      # Deploy ONLY hosting to the LIVE channel. Uses the WIF credentials
+      # (GOOGLE_APPLICATION_CREDENTIALS) exported by the auth step — no token,
+      # no interactive login. --non-interactive is belt-and-braces for CI.
+      - name: Deploy to Firebase Hosting (live channel)
+        run: |
+          firebase deploy \
+            --only hosting \
+            --project openskeleton-one \
+            --non-interactive
+
+      # Prove the AC: the live site answers over HTTPS on the Firebase domain.
+      # Retries absorb the brief CDN propagation window after a release.
+      - name: Verify live site serves over HTTPS
+        run: |
+          set -euo pipefail
+          URL="https://openskeleton-one.web.app/"
+          echo "Checking ${URL}"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' \
+            --retry 5 --retry-delay 5 --retry-all-errors "${URL}")"
+          echo "HTTP ${code} from ${URL}"
+          if [ "${code}" != "200" ]; then
+            echo "::error::Live site did not return 200 (got ${code})."
+            exit 1
+          fi
+          echo "Live site is serving over HTTPS."
