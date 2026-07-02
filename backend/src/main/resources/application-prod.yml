@@ -22,3 +22,13 @@ springdoc:
     enabled: false
   api-docs:
     enabled: false
+
+# Structured JSON logging on prod (OSK-45): Cloud Run ships stdout to Cloud
+# Logging, and ECS-format JSON makes every line queryable. Micrometer Tracing
+# (see pom) puts trace.id/span.id in the MDC, which the ECS encoder emits per
+# line, so a request is traceable end-to-end. dev keeps the default
+# human-readable console (no structured format set there).
+logging:
+  structured:
+    format:
+      console: ecs

@@ -50,6 +50,14 @@
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 
+		<!-- Micrometer Tracing (OSK-45): puts trace.id/span.id into the logging
+		     MDC per request so every log line is correlatable. Version managed by
+		     the Boot parent. -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-tracing-bridge-brave</artifactId>
+		</dependency>
+
 		<!-- springdoc (OSK-57): auto-generated OpenAPI spec (/v3/api-docs) +
 		     Swagger UI (/swagger-ui). Not managed by the Boot parent, so pin the
 		     version explicitly (kept current with Boot 3.5.x). -->
