@@ -71,6 +71,13 @@ ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseContainerSupport"
 # We default it here too so `docker run` without -e PORT still binds 8080.
 ENV PORT=8080
 
+# OSK-100: stamp the git commit into the image at BUILD time. image.yml passes
+# `--build-arg GIT_SHA=${github.sha}`; we surface it as the GIT_SHA env var so the
+# app's /version endpoint reports exactly which commit is running. Defaults to
+# "unknown" for a plain `docker build` with no build-arg — never a hardcoded SHA.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 # Document the default listen port. EXPOSE is metadata only; the app honours $PORT
 # at runtime regardless, so a platform handing us a different port still works.
 EXPOSE 8080

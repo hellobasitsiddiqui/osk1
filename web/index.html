@@ -72,6 +72,17 @@
         font-size: 0.8rem;
         color: var(--muted);
       }
+      /* OSK-100: unobtrusive build/version footer. Small, muted, monospaced so the
+         SHAs read as metadata, not headline content. */
+      .build {
+        margin-top: 1.5rem;
+        font-size: 0.72rem;
+        line-height: 1.6;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+          monospace;
+      }
+      .build .label { opacity: 0.7; }
     </style>
   </head>
   <body>
@@ -81,6 +92,62 @@
       <p>The web front-end is up and serving from nginx.</p>
       <p>Static build placeholder — the full single-page app lands soon.</p>
       <span class="tag">web &middot; nginx &middot; container</span>
+
+      <!--
+        OSK-100 build/version stamp. Two lines: the web build id (injected into
+        config.js's buildSha at deploy time) and the backend build id (fetched live
+        from the backend's public /version endpoint). Both resolve at build/deploy
+        time — nothing here is hardcoded. Kept intentionally small + muted so it
+        reads as metadata, not content.
+      -->
+      <footer class="build">
+        <div>
+          <span class="label">web</span> <span id="web-build">dev</span>
+        </div>
+        <div>
+          <span class="label">backend</span> <span id="backend-build">…</span>
+        </div>
+      </footer>
     </main>
+
+    <script>
+      // Render the web build id from the deploy-injected config, then fetch the
+      // backend's /version and show both together (AC3). All failures degrade
+      // gracefully — a missing/unreachable backend must not break the page.
+      (function () {
+        var cfg = window.__APP_CONFIG__ || {};
+
+        // 1) Web build id — straight from config.js's buildSha (deploy-injected).
+        var webEl = document.getElementById("web-build");
+        if (webEl) {
+          webEl.textContent = cfg.buildSha || "unknown";
+        }
+
+        // 2) Backend build id — fetch the public /version endpoint. apiBaseUrl is
+        //    the deploy-resolved backend URL, or "" (same-origin) until the backend
+        //    is live. Trim any trailing slash so we never build a "//version" URL.
+        var backendEl = document.getElementById("backend-build");
+        if (!backendEl) {
+          return;
+        }
+        var base = (cfg.apiBaseUrl || "").replace(/\/+$/, "");
+        fetch(base + "/version", { headers: { Accept: "application/json" } })
+          .then(function (r) {
+            if (!r.ok) {
+              throw new Error("HTTP " + r.status);
+            }
+            return r.json();
+          })
+          .then(function (v) {
+            var sha = v && v.sha ? v.sha : "unknown";
+            // Show the Cloud Run revision alongside the SHA when present.
+            backendEl.textContent = v && v.revision ? sha + " · " + v.revision : sha;
+          })
+          .catch(function () {
+            // Backend not deployed yet / unreachable — say so quietly, don't error.
+            backendEl.textContent = "unavailable";
+          });
+      })();
+    </script>
   </body>
 </html>

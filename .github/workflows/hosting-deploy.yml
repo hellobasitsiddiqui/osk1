@@ -149,6 +149,29 @@ jobs:
           echo "config.js apiBaseUrl is now:"
           grep -n 'apiBaseUrl' "${CONFIG}"
 
+          # OSK-100: stamp the short commit SHA into config.js's buildSha using the
+          # SAME node-rewrite seam as apiBaseUrl (never hardcoded). GITHUB_SHA is the
+          # default env var GitHub sets on every step; we surface the short 7-char
+          # form for an unobtrusive footer. Fails loudly if the buildSha key is
+          # missing so a config refactor can't silently drop the stamp.
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          CONFIG="${CONFIG}" BUILD_SHA="${SHORT_SHA}" node -e '
+            const fs = require("fs");
+            const p = process.env.CONFIG;
+            const sha = process.env.BUILD_SHA || "unknown";
+            const re = /(buildSha:\s*")[^"]*(")/;
+            let s = fs.readFileSync(p, "utf8");
+            if (!re.test(s)) {
+              console.error("::error::buildSha not found in " + p);
+              process.exit(1);
+            }
+            s = s.replace(re, "$1" + sha + "$2");
+            fs.writeFileSync(p, s);
+            console.log("Wrote buildSha=" + JSON.stringify(sha) + " to " + p);
+          '
+          echo "config.js buildSha is now:"
+          grep -n 'buildSha' "${CONFIG}"
+
       # TM-128 step 2: fail-closed. A dev-default backend URL reaching the live
       # channel is a PIPELINE failure, not a user-facing bug — block the deploy.
       - name: Guard — no localhost/127.0.0.1 apiBaseUrl may ship
