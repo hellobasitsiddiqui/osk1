@@ -1,0 +1,69 @@
+# gitleaks.yml — Secret-scanning backstop for OpenSkeleton (osk1) — OSK-34 (1.3.6).
+#
+# WHAT: On every pull request targeting main, run Gitleaks over the PR to look
+#       for hard-coded secrets (tokens, keys, credentials) in the diff/tree.
+#
+# WHY:  GitHub-native secret scanning + push protection are ALREADY enabled on
+#       this public repo and are the primary defence — they block known secret
+#       patterns at push time and alert on the default branch. Gitleaks runs
+#       here as a *second, independent* pair of eyes inside CI: it uses a
+#       different rule set and catches generic/high-entropy patterns that the
+#       native provider-token scanner does not. Belt-and-braces, not a
+#       replacement.
+#
+# ADVISORY / NON-BLOCKING: This job is intentionally a soft gate. The scan step
+#       uses `continue-on-error: true`, so a Gitleaks finding surfaces as an
+#       annotation on the PR but does NOT fail the required CI checks or block
+#       the merge. The authoritative, blocking control is GitHub push protection
+#       (which rejects the push before it ever reaches a PR). Treat any finding
+#       here as a signal to investigate and rotate — see SECURITY.md,
+#       "Handling a flagged or leaked secret". If this backstop proves reliable
+#       it can later be promoted to a hard gate by removing `continue-on-error`.
+#
+# SECURITY: The third-party action is pinned to a full commit SHA (never a
+#           moving tag) so a re-pointed/compromised tag cannot inject code into
+#           CI. The trailing "# vX.Y.Z" comment records the human-readable
+#           version the SHA corresponds to. Note: gitleaks-action is free for
+#           public repositories and personal accounts, so no GITLEAKS_LICENSE
+#           secret is required here.
+
+name: Gitleaks
+
+# Run on PRs into main only. Push protection already guards the push path and
+# native secret scanning watches the default branch, so the PR is the useful
+# place for this CI backstop to add coverage.
+on:
+  pull_request:
+    branches: [main]
+
+# Least-privilege: the scan only needs to read the checked-out source.
+permissions:
+  contents: read
+
+# Cancel a superseded in-progress run for the same PR/branch when a new commit
+# arrives, so we don't waste CI minutes re-scanning stale trees.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    name: Gitleaks secret scan (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      # Full history checkout: fetch-depth 0 lets Gitleaks scan the range of
+      # commits introduced by the PR (not just the tip), so a secret added and
+      # then "removed" in a later commit of the same PR is still caught.
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      # Run Gitleaks. `continue-on-error: true` makes this advisory: a leak is
+      # reported as a PR annotation and the step is marked failed in its own
+      # right, but the job (and therefore the merge gate) still succeeds.
+      - name: Gitleaks scan
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
