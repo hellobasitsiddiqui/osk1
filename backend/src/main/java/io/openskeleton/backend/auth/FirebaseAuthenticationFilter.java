@@ -22,8 +22,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * <p><b>What it does:</b> for a protected request it reads the
  * {@code Authorization: Bearer <token>} header, hands the raw token to the injected
  * {@link TokenVerifier}, and — on success — stashes the caller's {@code uid}/{@code
- * email} as request attributes so downstream handlers (e.g. {@code /api/v1/me}) can
- * read them. On a missing/malformed header or a token that fails verification it
+ * email} and their Spring authorities ({@code ROLE_USER}/{@code ROLE_ADMIN}, mapped
+ * from the Firebase {@code role} custom claim — OSK-79) as request attributes so
+ * downstream handlers (e.g. {@code /api/v1/me}) can read them. On a missing/malformed
+ * header or a token that fails verification it
  * short-circuits the chain with an RFC 7807 {@code 401} in the same
  * {@code application/problem+json} shape the rest of the API uses (OSK-39 /
  * {@code GlobalExceptionHandler}).
@@ -72,6 +74,16 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
 
     /** Request attribute for the verified caller's email (may be absent on the token → {@code null}). */
     public static final String EMAIL_ATTRIBUTE = "io.openskeleton.auth.email";
+
+    /**
+     * Request attribute under which the caller's Spring authorities are published
+     * (OSK-79). The value is an immutable {@code List<GrantedAuthority>} carrying the
+     * caller's role as {@code ROLE_USER} / {@code ROLE_ADMIN}, mapped from the Firebase
+     * {@code role} custom claim (defaulting to {@code ROLE_USER} when the claim is
+     * absent). Downstream handlers and later authorization logic (OSK-71) read this key
+     * to decide what the caller may do, without re-deriving it from the token.
+     */
+    public static final String AUTHORITIES_ATTRIBUTE = "io.openskeleton.auth.authorities";
 
     private final TokenVerifier tokenVerifier;
     private final ObjectMapper objectMapper;
@@ -141,9 +153,14 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 3) Authenticated. Publish the identity for downstream handlers and continue.
+        // 3) Authenticated. Publish the identity + authorities for downstream handlers
+        //    and continue. The role custom claim (resolved on the verified principal by
+        //    RoleClaimMapper) is mapped to a Spring ROLE_* authority here (OSK-79), so
+        //    the request carries who the caller is AND what role they hold — with the
+        //    least-privilege ROLE_USER default already applied when the claim is absent.
         request.setAttribute(UID_ATTRIBUTE, verified.uid());
         request.setAttribute(EMAIL_ATTRIBUTE, verified.email());
+        request.setAttribute(AUTHORITIES_ATTRIBUTE, RoleClaimMapper.authoritiesFrom(verified.role()));
         filterChain.doFilter(request, response);
     }
 

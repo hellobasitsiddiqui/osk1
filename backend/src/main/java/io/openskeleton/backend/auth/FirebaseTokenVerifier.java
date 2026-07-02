@@ -6,6 +6,7 @@ import com.google.firebase.FirebaseOptions;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseToken;
+import io.openskeleton.backend.user.User.Role;
 import java.io.IOException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,7 +77,12 @@ public class FirebaseTokenVerifier implements TokenVerifier {
         try {
             FirebaseToken token = firebaseAuth.verifyIdToken(idToken);
             // email is optional on a Firebase token (e.g. anonymous/phone sign-in).
-            return new VerifiedToken(token.getUid(), token.getEmail());
+            // The role custom claim (OSK-79) is mapped to the platform Role by the
+            // (unit-tested) RoleClaimMapper; an absent claim defaults to USER. This
+            // adapter stays a thin pass-through so its exclusion from the coverage gate
+            // hides no real logic.
+            Role role = RoleClaimMapper.roleFromClaims(token.getClaims());
+            return new VerifiedToken(token.getUid(), token.getEmail(), role);
         } catch (FirebaseAuthException e) {
             throw new TokenVerificationException("Firebase rejected the ID token.", e);
         }
