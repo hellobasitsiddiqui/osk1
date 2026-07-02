@@ -1,0 +1,16 @@
+# Auth overlay (OSK-52 / TM-130) — mounts the developer's host Application Default
+# Credentials so the backend can verify real Firebase ID tokens locally, KEYLESS
+# (no committed service-account key). Only needed once Firebase auth lands (OSK-28).
+#
+# Prereq:  gcloud auth application-default login
+# Usage:   docker compose -f docker-compose.yml -f docker-compose.auth.yml up
+#
+# Kept as an overlay (not the base file) so a clean-clone `docker compose up` still
+# works when no ADC is present (TM-127) — mounting a missing ADC path would abort it.
+services:
+  backend:
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /gcp/adc.json
+    volumes:
+      # Read-only, and the path must be readable by the non-root "app" user (uid 999).
+      - ${GOOGLE_ADC_PATH:-${HOME}/.config/gcloud/application_default_credentials.json}:/gcp/adc.json:ro
