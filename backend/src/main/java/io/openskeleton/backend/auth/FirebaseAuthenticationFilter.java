@@ -120,8 +120,9 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 2) Verify the token via the seam. A failure is a normal, expected outcome
-        //    (expired/forged/bad token) → 401, not a 500.
+        // 2) Verify the token via the seam. Two failure modes are handled distinctly:
+        //    a bad token is a normal 401; a dependency that is slow/tripped/unreachable
+        //    is a degraded 503 (OSK-65) — never a hang, and never mislabelled as a 401.
         VerifiedToken verified;
         try {
             verified = tokenVerifier.verify(idToken);
@@ -130,6 +131,13 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
             // the reason must not be echoed verbatim to the caller.
             log.debug("Firebase ID token verification failed: {}", e.getMessage());
             writeUnauthorized(response, "Invalid or expired authentication token.");
+            return;
+        } catch (AuthDependencyUnavailableException e) {
+            // Infrastructure fault surfaced by the resilience layer (verify timed out,
+            // the circuit-breaker is open, or bounded retries were exhausted). Fail fast
+            // with a degraded 503 rather than hanging the request or masking it as 401.
+            log.warn("Token verification dependency degraded; returning 503: {}", e.getMessage());
+            writeServiceUnavailable(response, "Authentication is temporarily unavailable. Please retry shortly.");
             return;
         }
 
@@ -152,6 +160,23 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
 
         response.setStatus(HttpStatus.UNAUTHORIZED.value());
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+        objectMapper.writeValue(response.getWriter(), problem);
+    }
+
+    /**
+     * Writes an RFC 7807 {@code 503} response (media type
+     * {@code application/problem+json}) for the <i>degraded</i> case (OSK-65): the
+     * verification dependency is unavailable, so we fail fast instead of hanging. Same
+     * {@link ProblemDetail} shape as the 401 path, plus a {@code Retry-After} hint so
+     * clients (and probes) back off before retrying the sick dependency.
+     */
+    private void writeServiceUnavailable(HttpServletResponse response, String detail) throws IOException {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, detail);
+        problem.setTitle("Service Unavailable");
+
+        response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+        response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+        response.setHeader(HttpHeaders.RETRY_AFTER, "5");
         objectMapper.writeValue(response.getWriter(), problem);
     }
 }

@@ -55,6 +55,12 @@ management:
     metrics:
       export:
         enabled: false
+  # Keep the Resilience4j circuit-breaker (OSK-65) out of /actuator/health: the health
+  # endpoint is the public liveness probe, and an open breaker (a transient degraded
+  # state we already surface as a 503) must not flip it to DOWN and trigger a restart.
+  health:
+    circuitbreakers:
+      enabled: false
   endpoints:
     web:
       exposure:
@@ -95,3 +101,58 @@ springdoc:
 # committed. Override per-environment via FIREBASE_PROJECT_ID if needed.
 firebase:
   project-id: ${FIREBASE_PROJECT_ID:openskeleton-one}
+
+# --- Resilience / graceful degradation (OSK-65) --------------------------------
+# The backend's ONLY outbound dependency is Firebase Admin SDK token verification
+# (behind the TokenVerifier seam). ResilientTokenVerifier wraps that call with a
+# TimeLimiter + Retry + CircuitBreaker so a slow or failing Firebase never hangs a
+# request or piles up threads: a verify that exceeds the timeout, trips the breaker,
+# or exhausts its bounded retries fails fast and the auth filter returns a degraded
+# 503 (problem+json). A genuinely INVALID token is still a 401 — only infrastructure
+# faults degrade to 503, so AuthFailureWrapper (which carries a real token rejection)
+# is listed under ignore-exceptions for both the breaker and the retry.
+resilience4j:
+  timelimiter:
+    instances:
+      tokenVerifier:
+        # Hard ceiling on a single verify attempt. Firebase verification is normally
+        # sub-second (cached signing keys); 2s is generous headroom. On timeout the
+        # running future is cancelled/interrupted so the worker thread is freed.
+        # Override per-environment via AUTH_VERIFY_TIMEOUT (a Spring duration, e.g. 500ms).
+        timeout-duration: ${AUTH_VERIFY_TIMEOUT:2s}
+        cancel-running-future: true
+  retry:
+    instances:
+      tokenVerifier:
+        # Bounded attempts (1 initial + 2 retries) with exponential backoff, for
+        # TRANSIENT faults only. Timeouts, an open breaker (CallNotPermittedException)
+        # and real token rejections (AuthFailureWrapper) are NOT retried — retrying a
+        # hung/tripped/deterministic call only adds latency — so they are ignored here.
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        ignore-exceptions:
+          - io.openskeleton.backend.auth.AuthFailureWrapper
+          - java.util.concurrent.TimeoutException
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+  circuitbreaker:
+    instances:
+      tokenVerifier:
+        # Count-based window: once >=50% of the last 10 calls (min 5 recorded) fail,
+        # the breaker OPENS and every call fast-fails for 10s, then half-opens and
+        # probes with 3 calls. Timeouts and transient faults count as failures; a real
+        # token rejection (AuthFailureWrapper) must never open the breaker (an attacker
+        # spamming bad tokens could otherwise deny service), so it is ignored.
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        # Breaker state is intentionally kept OUT of /actuator/health so an open
+        # breaker does not flip the public liveness probe to DOWN and cause a restart.
+        register-health-indicator: false
+        ignore-exceptions:
+          - io.openskeleton.backend.auth.AuthFailureWrapper
