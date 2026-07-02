@@ -11,6 +11,11 @@ that ties it together.
 **Status:** stub. Individual infra tickets (project creation, deploy auth,
 Cloud SQL, Cloud Run deploy, secrets) fill this in. Minimal placeholder for now.
 
+**Secrets & env contract:** how the backend receives its config and its one secret
+(`DB_PASSWORD` via Secret Manager), why CI needs **no repository secrets** (keyless
+WIF/OIDC), and the required-var → source table — see
+[`secrets-and-env.md`](secrets-and-env.md) (OSK-15).
+
 ## Deploy service account (gha-deployer) roles
 
 The keyless CI deploy (OSK-42) impersonates the deploy SA (`GCP_DEPLOY_SA` in
