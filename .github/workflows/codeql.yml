@@ -58,7 +58,7 @@ jobs:
     steps:
       # Check out the PR/branch source so CodeQL has code to build and analyse.
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Install Temurin JDK 21 (matches backend/pom.xml) so CodeQL's autobuild
       # compiles the Maven module with the correct toolchain. Enable ~/.m2
