@@ -27,4 +27,11 @@ window.__APP_CONFIG__ = {
   // Base URL of the backend API, no trailing slash. Overwritten at deploy time.
   // LOCAL DEV DEFAULT ONLY — never shipped to production (see header comment).
   apiBaseUrl: "http://127.0.0.1:8080",
+
+  // OSK-100: short git SHA of the web build, rendered unobtrusively by index.html.
+  // Committed placeholder is "dev"; the Firebase Hosting deploy
+  // (.github/workflows/hosting-deploy.yml) rewrites this with the short
+  // ${GITHUB_SHA} at deploy time via the SAME node-rewrite seam as apiBaseUrl —
+  // never hardcoded, so a fresh replay project shows the correct value.
+  buildSha: "dev",
 };

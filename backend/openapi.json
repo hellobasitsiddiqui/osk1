@@ -30,6 +30,20 @@
           }
         },
         "type" : "object"
+      },
+      "Version" : {
+        "properties" : {
+          "buildTime" : {
+            "type" : "string"
+          },
+          "revision" : {
+            "type" : "string"
+          },
+          "sha" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
       }
     }
   },
@@ -95,6 +109,24 @@
           }
         },
         "tags" : [ "health-controller" ]
+      }
+    },
+    "/version" : {
+      "get" : {
+        "operationId" : "version",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/Version"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "version-controller" ]
       }
     }
   },
