@@ -75,7 +75,7 @@ jobs:
       # produce an accurate database; with build-mode set, the analyze step below
       # performs the build — no separate autobuild step is needed.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
+        uses: github/codeql-action/init@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
         with:
           languages: java-kotlin
           build-mode: autobuild
