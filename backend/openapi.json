@@ -37,6 +37,14 @@
         },
         "type" : "object"
       },
+      "UpdateProfileRequest" : {
+        "properties" : {
+          "displayName" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "Version" : {
         "properties" : {
           "buildTime" : {
@@ -84,6 +92,32 @@
     "/api/v1/me" : {
       "get" : {
         "operationId" : "me",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CurrentUser"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "me-controller" ]
+      },
+      "patch" : {
+        "operationId" : "updateMe",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required" : true
+        },
         "responses" : {
           "200" : {
             "content" : {
