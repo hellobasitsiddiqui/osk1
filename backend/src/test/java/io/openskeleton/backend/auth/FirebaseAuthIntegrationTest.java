@@ -58,7 +58,9 @@ class FirebaseAuthIntegrationTest {
         mvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + VALID_TOKEN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.uid").value("uid-123"))
-                .andExpect(jsonPath("$.email").value("alice@example.com"));
+                .andExpect(jsonPath("$.email").value("alice@example.com"))
+                // OSK-66: /me now returns the full identity; role defaults to USER until RBAC (OSK-79).
+                .andExpect(jsonPath("$.role").value("USER"));
     }
 
     @Test
