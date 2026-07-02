@@ -1,0 +1,186 @@
+# deploy.yml — Continuous Deployment of the backend to Cloud Run (OSK-47).
+#
+# WHAT: On every push to `main` (i.e. every merge), deploy the backend container
+#       image to the Cloud Run service `openskeleton-backend`, connected to Cloud
+#       SQL (OSK-20) under the `prod` Spring profile, with `/health` wired as the
+#       startup + liveness probe so only a healthy revision receives traffic.
+#
+# AUTH: keyless — GitHub federates to GCP via Workload Identity Federation (OIDC,
+#       OSK-42). No service-account JSON key. `google-github-actions/auth` writes a
+#       short-lived credential that gcloud picks up as Application Default Credentials.
+#
+# ACCESS: the service is deployed PRIVATE (`--no-allow-unauthenticated`). Making it
+#       publicly invokable (allUsers) is a deliberate, separate decision — OSK-51.
+#
+# TM-131 HARDENING (stale-revision trap — the whole reason this file is careful):
+#   In TM-131 the live backend served STALE code for an entire project while every
+#   deploy reported green, because a new revision failed its startup probe (Flyway
+#   couldn't auth to Cloud SQL, TM-63), never became Ready, and Cloud Run kept
+#   serving the old revision — yet the verify curled `/health` (200 on the stale
+#   revision) and passed. Two guarantees are built in here:
+#     * AC-H1 — the `Verify rollout` step does NOT trust `/health`. It asserts the
+#       revision now taking 100% traffic IS the revision this run created AND that
+#       its running image digest == the digest we deployed. Mismatch -> hard fail.
+#     * AC-H2 — deploy with `--to-latest` so 100% of traffic rolls forward to the
+#       new revision (never pinned to an old one), and the verify proves it moved.
+#
+# TM-194 HARDENING (docs-only HEAD has no image):
+#   The deploy must not assume `main` HEAD has an image. It waits (bounded) for
+#   HEAD's image, and if none appears (e.g. a docs-only commit that built no image)
+#   it resolves the newest ANCESTOR of HEAD whose image exists in Artifact Registry
+#   and deploys that — logging exactly which SHA it deployed. If neither HEAD nor
+#   any recent ancestor has an image, it fails loudly (never silently deploys
+#   something unexpected, never leaves the backend job green with nothing shipped).
+#
+# SECURITY: every action is pinned to a full commit SHA (OSK-40); the trailing
+#           "# vX.Y.Z" records the human-readable tag.
+
+name: Deploy backend (Cloud Run)
+
+# Merge-to-main only. No pull_request trigger — a PR must never deploy live.
+# workflow_dispatch allows a manual redeploy of current main.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# id-token: write lets the runner mint the OIDC token WIF trusts; contents: read
+# is all the checkout needs.
+permissions:
+  contents: read
+  id-token: write
+
+# Never run two backend deploys for the same ref at once, and don't cancel an
+# in-flight deploy midway — a half-applied rollout is worse than waiting.
+concurrency:
+  group: deploy-backend-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: openskeleton-one
+  REGION: europe-west2
+  SERVICE: openskeleton-backend
+  IMAGE_REPO: europe-west2-docker.pkg.dev/openskeleton-one/osk-backend/backend
+  INSTANCE_CONNECTION_NAME: openskeleton-one:europe-west2:osk-pg
+  RUNTIME_SA: 476227744481-compute@developer.gserviceaccount.com
+  # The service's stable Cloud Run URL (new deterministic format). Injected as the
+  # prod APP_PUBLIC_BASE_URL (which is @NotBlank in the prod profile, so it must be
+  # a real non-blank value at boot).
+  SERVICE_URL: https://openskeleton-backend-476227744481.europe-west2.run.app
+
+jobs:
+  deploy:
+    name: Deploy backend to Cloud Run
+    runs-on: ubuntu-latest
+    steps:
+      # Full history so the TM-194 ancestor walk can resolve an effective SHA.
+      - name: Checkout (full history for ancestor walk)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud (keyless OIDC / WIF)
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
+        with:
+          project_id: openskeleton-one
+          workload_identity_provider: projects/476227744481/locations/global/workloadIdentityPools/github/providers/github-provider
+          service_account: gh-deployer@openskeleton-one.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+
+      # TM-194: resolve the SHA we will actually deploy. Bounded-wait for HEAD's
+      # image first (a code commit's image may still be building in image.yml on the
+      # same push), then fall back to the newest ancestor with an image (docs-only
+      # HEAD). Fail loudly if nothing is found. Emits the resolved image DIGEST so
+      # the deploy + verify are pinned to an immutable reference.
+      - name: Resolve effective backend image (TM-194)
+        id: img
+        run: |
+          set -euo pipefail
+          HEAD_SHA='${{ github.sha }}'
+          digest_of() { gcloud artifacts docker images describe "${IMAGE_REPO}:$1" \
+            --project="${PROJECT_ID}" --format='value(image_summary.fully_qualified_digest)' 2>/dev/null || true; }
+
+          EFFECTIVE_SHA=""
+          DIGEST=""
+          echo "Waiting (bounded) for HEAD image ${IMAGE_REPO}:${HEAD_SHA} ..."
+          for i in $(seq 1 24); do
+            D="$(digest_of "${HEAD_SHA}")"
+            if [ -n "${D}" ]; then EFFECTIVE_SHA="${HEAD_SHA}"; DIGEST="${D}"; break; fi
+            echo "  not present yet (attempt ${i}/24); sleeping 15s"; sleep 15
+          done
+
+          if [ -z "${DIGEST}" ]; then
+            echo "::notice::HEAD ${HEAD_SHA} has no image after wait — walking ancestors (docs-only HEAD?)."
+            for sha in $(git rev-list HEAD | head -n 50); do
+              D="$(digest_of "${sha}")"
+              if [ -n "${D}" ]; then EFFECTIVE_SHA="${sha}"; DIGEST="${D}"; break; fi
+            done
+          fi
+
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::No backend image found for HEAD or any of the last 50 ancestors. Refusing to deploy."
+            exit 1
+          fi
+          echo "Deploying effective SHA ${EFFECTIVE_SHA}"
+          echo "Resolved digest ${DIGEST}"
+          echo "effective_sha=${EFFECTIVE_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
+
+      # Deploy by immutable DIGEST (not a tag) so the running image is provably the
+      # one we resolved. --to-latest (AC-H2) rolls 100% traffic to the new revision.
+      # Secrets: DB_PASSWORD from Secret Manager (OSK-20, never in the repo).
+      # /health startup + liveness probes: an unhealthy revision gets no traffic.
+      - name: Deploy to Cloud Run
+        id: deploy
+        run: |
+          set -euo pipefail
+          NEW_REV="$(gcloud run deploy "${SERVICE}" \
+            --project="${PROJECT_ID}" --region="${REGION}" \
+            --image='${{ steps.img.outputs.digest }}' \
+            --service-account="${RUNTIME_SA}" \
+            --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}" \
+            --set-secrets="DB_PASSWORD=osk-db-app-password:latest" \
+            --set-env-vars="^@^SPRING_PROFILES_ACTIVE=prod@INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME}@DB_NAME=osk@DB_USERNAME=app@APP_ENVIRONMENT_NAME=prod@GOOGLE_CLOUD_PROJECT=${PROJECT_ID}@APP_PUBLIC_BASE_URL=${SERVICE_URL}" \
+            --min-instances=0 --max-instances=2 \
+            --cpu=1 --memory=1Gi --cpu-boost \
+            --port=8080 --timeout=300 \
+            --startup-probe="httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=10,periodSeconds=5,failureThreshold=12,timeoutSeconds=3" \
+            --liveness-probe="httpGet.path=/health,httpGet.port=8080,periodSeconds=30,failureThreshold=3,timeoutSeconds=3" \
+            --no-allow-unauthenticated \
+            --to-latest \
+            --quiet \
+            --format='value(status.latestCreatedRevisionName)')"
+          echo "Created revision ${NEW_REV}"
+          echo "new_rev=${NEW_REV}" >> "${GITHUB_OUTPUT}"
+
+      # AC-H1 + AC-H2: do NOT trust /health. Assert the revision taking 100% traffic
+      # IS the one this run created, and that its running image digest == the digest
+      # we deployed. Either mismatch => the new code is NOT actually serving => fail.
+      - name: Verify rollout (AC-H1/H2 — new revision truly serving)
+        run: |
+          set -euo pipefail
+          NEW_REV='${{ steps.deploy.outputs.new_rev }}'
+          WANT_DIGEST='${{ steps.img.outputs.digest }}'
+
+          TRAFFIC_REV="$(gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" --region="${REGION}" \
+            --format='json' | jq -r '.status.traffic[] | select(.percent==100) | .revisionName' | head -n1)"
+          echo "Revision taking 100% traffic: ${TRAFFIC_REV}"
+
+          if [ "${TRAFFIC_REV}" != "${NEW_REV}" ]; then
+            echo "::error::Traffic is on '${TRAFFIC_REV}', not the revision this run created ('${NEW_REV}'). The new code is NOT serving (TM-131 stale-revision trap). Failing."
+            exit 1
+          fi
+
+          SERVING_IMAGE="$(gcloud run revisions describe "${TRAFFIC_REV}" \
+            --project="${PROJECT_ID}" --region="${REGION}" \
+            --format='value(spec.containers[0].image)')"
+          echo "Serving image:  ${SERVING_IMAGE}"
+          echo "Deployed digest: ${WANT_DIGEST}"
+          if [ "${SERVING_IMAGE}" != "${WANT_DIGEST}" ]; then
+            echo "::error::Serving revision image digest does not match the digest we deployed. Failing."
+            exit 1
+          fi
+          echo "Rollout verified: revision ${NEW_REV} is serving 100% traffic on the exact image we deployed."
