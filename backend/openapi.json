@@ -12,6 +12,17 @@
         },
         "type" : "object"
       },
+      "CurrentUser" : {
+        "properties" : {
+          "email" : {
+            "type" : "string"
+          },
+          "uid" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "Health" : {
         "properties" : {
           "status" : {
@@ -48,6 +59,24 @@
           }
         },
         "tags" : [ "api-info-controller" ]
+      }
+    },
+    "/api/v1/me" : {
+      "get" : {
+        "operationId" : "me",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CurrentUser"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "me-controller" ]
       }
     },
     "/health" : {
