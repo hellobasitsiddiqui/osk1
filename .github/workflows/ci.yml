@@ -123,3 +123,18 @@ jobs:
           name: jacoco-coverage-report
           path: backend/target/site/jacoco
           if-no-files-found: warn
+
+      # Publish the CycloneDX SBOM (OSK-40) produced by the cyclonedx-maven-plugin
+      # during `mvnw verify` (bound to the package phase — see backend/pom.xml).
+      # This is the supply-chain record of exactly which dependencies went into the
+      # build; download it from the run to answer "is affected package X in here?"
+      # during CVE triage. Uploaded whenever the BOM files exist.
+      - name: Upload CycloneDX SBOM
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        with:
+          name: sbom-cyclonedx
+          path: |
+            backend/target/bom.json
+            backend/target/bom.xml
+          if-no-files-found: warn
