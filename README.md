@@ -106,3 +106,15 @@ Released under the [MIT License](LICENSE) — © 2026 Basit Siddiqui / OpenSkele
 - See [`KICKOFF.md`](KICKOFF.md) for how a build agent starts a round, and
   [`docs/agents/PROMPT-LOG.md`](docs/agents/PROMPT-LOG.md) for the verbatim
   human-prompt log.
+
+## Run the whole stack locally
+
+```
+./scripts/dev-setup.sh   # writes a local .env with dev defaults (git-ignored)
+docker compose up         # backend + web + Postgres, one command
+```
+
+Backend on http://localhost:8080, web on http://localhost:8081, Postgres on 5432
+(all bound to 127.0.0.1). Data persists in the `pgdata` volume. For authenticated
+testing once Firebase auth lands, run `gcloud auth application-default login` and add
+the overlay: `docker compose -f docker-compose.yml -f docker-compose.auth.yml up`.
