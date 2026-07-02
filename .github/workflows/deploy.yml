@@ -21,7 +21,8 @@
 #     * AC-H1 — the `Verify rollout` step does NOT trust `/health`. It asserts the
 #       revision now taking 100% traffic IS the revision this run created AND that
 #       its running image digest == the digest we deployed. Mismatch -> hard fail.
-#     * AC-H2 — deploy with `--to-latest` so 100% of traffic rolls forward to the
+#     * AC-H2 — `gcloud run deploy` routes 100% of traffic to the new revision by
+#       default (we never pass `--no-traffic`), so traffic rolls forward to the
 #       new revision (never pinned to an old one), and the verify proves it moved.
 #
 # TM-194 HARDENING (docs-only HEAD has no image):
@@ -66,7 +67,7 @@ env:
   # The service's stable Cloud Run URL (new deterministic format). Injected as the
   # prod APP_PUBLIC_BASE_URL (which is @NotBlank in the prod profile, so it must be
   # a real non-blank value at boot).
-  SERVICE_URL: https://openskeleton-backend-476227744481.europe-west2.run.app
+  SERVICE_URL: https://openskeleton-backend-mnfcg7doiq-nw.a.run.app
 
 jobs:
   deploy:
@@ -129,7 +130,8 @@ jobs:
           echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
 
       # Deploy by immutable DIGEST (not a tag) so the running image is provably the
-      # one we resolved. --to-latest (AC-H2) rolls 100% traffic to the new revision.
+      # one we resolved. `gcloud run deploy` routes 100% traffic to the new revision by
+      # default (AC-H2) — we never pass --no-traffic; the verify step proves it moved.
       # Secrets: DB_PASSWORD from Secret Manager (OSK-20, never in the repo).
       # /health startup + liveness probes: an unhealthy revision gets no traffic.
       - name: Deploy to Cloud Run
@@ -149,7 +151,6 @@ jobs:
             --startup-probe="httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=10,periodSeconds=5,failureThreshold=12,timeoutSeconds=3" \
             --liveness-probe="httpGet.path=/health,httpGet.port=8080,periodSeconds=30,failureThreshold=3,timeoutSeconds=3" \
             --no-allow-unauthenticated \
-            --to-latest \
             --quiet \
             --format='value(status.latestCreatedRevisionName)')"
           echo "Created revision ${NEW_REV}"
