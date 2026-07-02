@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# Docker build-context exclude list for the backend image.
+#
+# WHY this file exists: `docker build` uploads the whole backend/ directory to
+# the daemon as the "build context". Anything not needed to build the jar just
+# makes that upload slower and risks busting layer caches (or leaking local
+# junk into the image). We keep the context lean and deterministic.
+#
+# Note: the Dockerfile copies only .mvn/, mvnw, pom.xml and src/ explicitly, so
+# most of this is belt-and-braces — but it also protects `COPY . .` patterns a
+# future edit might introduce, and keeps context uploads small.
+# ---------------------------------------------------------------------------
+
+# Build output — always regenerated inside the image; never ship the host's copy.
+target/
+
+# Local IDE / editor state — irrelevant to the build.
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+
+# Docker + VCS metadata — not part of the application build.
+.git/
+.gitignore
+.gitattributes
+Dockerfile
+.dockerignore
+
+# Docs and OS cruft.
+README.md
+HELP.md
+.DS_Store
