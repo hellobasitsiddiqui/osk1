@@ -18,6 +18,17 @@ spring:
     url: jdbc:postgresql:///${DB_NAME:osk}?cloudSqlInstance=${INSTANCE_CONNECTION_NAME}&socketFactory=com.google.cloud.sql.postgres.SocketFactory
     username: ${DB_USERNAME:app}
     password: ${DB_PASSWORD}
+  # Allow out-of-order migrations in prod (see LESSONS L11/L12). PR preview backends
+  # (OSK-30) historically applied migrations to the shared prod DB in merge-independent
+  # order — e.g. V4 (audit_events) landed before V3 (users soft-delete columns), leaving
+  # a gap that Flyway's default validation rejects at boot ("resolved migration not
+  # applied to database: 3"), which stalled every deploy on `main`. Our migrations are
+  # mutually independent (distinct tables/columns), so applying a lower missing version
+  # after a higher one yields an identical schema — safe to allow. The ROOT fix is
+  # isolating the preview DB so it can never touch prod again (L12 follow-up); this keeps
+  # prod deployable in the meantime and self-heals the existing gap on the next boot.
+  flyway:
+    out-of-order: true
 
 # API docs are NOT exposed in prod — keep the interactive explorer off the public
 # surface. The spec can still be generated at build time for the drift check (OSK-88).
