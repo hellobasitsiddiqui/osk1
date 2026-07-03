@@ -835,5 +835,14 @@
       optional window.__APP_CONFIG__.tour block. Identical include across every page.
     -->
     <script src="/tour.js"></script>
+    <!--
+      OSK-82: first-login onboarding wiring. Loads AFTER tour.js and uses its additive
+      lifecycle hooks to (1) record onboarding-completed SERVER-side
+      (PATCH /api/v1/me/lifecycle) when the tour finishes, and (2) drive the first-run
+      auto-start from GET /api/v1/me.onboardingCompleted for a signed-in user — falling
+      back to tour.js's localStorage behaviour when signed out / auth not configured.
+      Self-contained + additive; identical include across every tour page.
+    -->
+    <script src="/onboarding.js"></script>
   </body>
 </html>

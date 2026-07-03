@@ -913,6 +913,29 @@
     markFirstRunDone();
     progress = null;
     teardown();
+    // OSK-82 hook: announce completion so a sibling module (web/onboarding.js) can record
+    // onboarding-completed SERVER-side (PATCH /api/v1/me/lifecycle). Additive + best-effort.
+    emitTourEvent("osk:tour:finished");
+  }
+
+  // OSK-82 hook: fire a DOM CustomEvent on `window` so sibling modules can observe the
+  // tour's lifecycle without tour.js knowing anything about them. Fully guarded — a
+  // missing CustomEvent constructor or a throwing listener never breaks the tour, so this
+  // is purely additive and safe to no-op. Kept tiny + generic (a `name` arg) so future
+  // lifecycle events reuse it.
+  function emitTourEvent(name) {
+    try {
+      var ev;
+      if (typeof window.CustomEvent === "function") {
+        ev = new window.CustomEvent(name);
+      } else if (document.createEvent) {
+        ev = document.createEvent("CustomEvent");
+        ev.initCustomEvent(name, false, false, null);
+      } else {
+        return;
+      }
+      window.dispatchEvent(ev);
+    } catch (e) { /* recording is best-effort — never let it break the tour */ }
   }
 
   function teardown() {
@@ -1011,13 +1034,37 @@
     if (decision.action === "resume") {
       resumeTour(pageKey, decision.step);
     } else if (decision.action === "autostart") {
-      // First-run: fire ONCE and record it immediately, so even an instant dismissal
-      // never re-triggers the auto-start on any later page load.
-      markFirstRunDone();
-      startTour(pageKey, true);
+      // OSK-82: a sibling module (web/onboarding.js) can take OWNERSHIP of the first-run
+      // auto-start so it can drive it from SERVER-side onboarding state
+      // (GET /api/v1/me.onboardingCompleted) instead of the localStorage-only flag. It
+      // signals that synchronously (it sets window.__oskSuppressAutoStart before boot runs,
+      // only on pages where it can consult the backend — i.e. where OSKAuth is present and
+      // Firebase is configured). When owned, we SKIP our localStorage auto-start and let it
+      // decide + call OSKTour.startTour(). RESUME (cross-page walkthrough) and the "?"
+      // launcher are untouched, and with no sibling present this is our normal behaviour.
+      var externalOwnsAutoStart = false;
+      try { externalOwnsAutoStart = window.__oskSuppressAutoStart === true; } catch (e) { /* ignore */ }
+      if (!externalOwnsAutoStart) {
+        // First-run: fire ONCE and record it immediately, so even an instant dismissal
+        // never re-triggers the auto-start on any later page load.
+        markFirstRunDone();
+        startTour(pageKey, true);
+      }
     }
     // "idle" -> do nothing; the launcher is there to start/resume on demand.
   }
+
+  // OSK-82: expose a MINIMAL, additive imperative surface so a sibling module
+  // (web/onboarding.js) can drive the first-run auto-start from server-side onboarding
+  // state and reconcile the local first-run flag with it. These are the SAME functions
+  // boot() uses, just made callable from outside — no existing behaviour changes, and in
+  // Node these are never attached (the whole browser section is skipped). `window.OSKTour`
+  // already holds the pure API (assigned above); we augment it here.
+  window.OSKTour.startTour = startTour; // startTour(pageKey, walkthrough) — begin at step 0
+  window.OSKTour.markFirstRunDone = markFirstRunDone; // record the one-time first-run as done
+  window.OSKTour.isFirstRunDone = isFirstRunDone; // has the first-run auto-start already fired?
+  window.OSKTour.loadProgress = loadProgress; // read the persisted in-flight tour position
+  window.OSKTour.currentPageKey = currentPageKey; // this page's tour key (honours data-tour-page)
 
   // Run after the DOM is parsed so targets + document.body exist.
   if (document.readyState === "loading") {
