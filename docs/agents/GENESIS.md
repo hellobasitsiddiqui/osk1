@@ -15,6 +15,12 @@ The genesis is everything that must exist before the keyless CI/CD deploy
 project, the deploy service account and its roles, and the Workload Identity
 trust. Values live in `infra/gcp.env`; this doc records what was set up and why.
 
+> **Scope:** this doc records **§A only** (GCP project + deploy SA + WIF). The
+> *rest* of the genesis a replay needs — runtime-SA IAM grants, Firebase auth +
+> web config, the public-access org policy, and the GitHub repo settings — is
+> consolidated, in run order, in the wave-−1 [`BRINGUP-RUNBOOK.md`](BRINGUP-RUNBOOK.md)
+> (authored under OSK-103; validated in [`SEED-REPLAY-DRYRUN.md`](SEED-REPLAY-DRYRUN.md)).
+
 ## §A — GCP project genesis
 
 ### §A1 — Project identity

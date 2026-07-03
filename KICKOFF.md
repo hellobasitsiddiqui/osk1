@@ -7,6 +7,7 @@ Read this file, then act. This is the standing kickoff for a build agent startin
 - **Jira:** project **OSK** on `https://10xai.atlassian.net` — the round-1 ticket set (open sprint: "OSK Sprint 1 - Foundation").
 - **Engine:** the `agents-at-work` plugin, pinned baseline **v0.2.0** — fleet conventions, Definition of Done, and lessons (`docs/agentic-lessons.md`).
 - **Jira access:** the engine's bundled MCP handles OAuth on first call. For anything the MCP can't do (attachments, Agile/sprint REST), machine-local creds live at `~/.config/teammarhaba/jira.env` — load with `set -a; . ~/.config/teammarhaba/jira.env; set +a` and **never echo the token**.
+- **Cloud/settings bring-up (wave-−1):** before the fleet runs, the human completes the one-time [`docs/agents/BRINGUP-RUNBOOK.md`](docs/agents/BRINGUP-RUNBOOK.md) — GCP auth/billing/project, deploy SA + WIF, Cloud SQL + secret, runtime-SA IAM, Firebase auth + web config, the public-access org policy, and the GitHub repo settings — so the build never stalls on a human wall mid-run (LESSONS-LEARNED H20). Not needed for a purely local run.
 
 ## Steps
 1. **Install the engine:**
