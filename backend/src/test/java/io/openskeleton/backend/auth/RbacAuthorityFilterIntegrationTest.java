@@ -45,7 +45,7 @@ class RbacAuthorityFilterIntegrationTest {
     @Test
     void adminPrincipalCausesRoleAdminAuthorityToBePublishedOnTheRequest() throws Exception {
         when(tokenVerifier.verify(eq(TOKEN)))
-                .thenReturn(new VerifiedToken("uid-admin", "admin@example.com", Role.ADMIN));
+                .thenReturn(new VerifiedToken("uid-admin", "admin@rbac.example.com", Role.ADMIN));
 
         mvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + TOKEN))
                 .andExpect(status().isOk())
@@ -59,7 +59,7 @@ class RbacAuthorityFilterIntegrationTest {
     void principalWithoutAnElevatedRoleGetsRoleUserByDefault() throws Exception {
         // The two-arg VerifiedToken defaults to Role.USER — the same default the mapper
         // applies when the Firebase role claim is absent.
-        when(tokenVerifier.verify(eq(TOKEN))).thenReturn(new VerifiedToken("uid-user", "user@example.com"));
+        when(tokenVerifier.verify(eq(TOKEN))).thenReturn(new VerifiedToken("uid-user", "user@rbac.example.com"));
 
         mvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + TOKEN))
                 .andExpect(status().isOk())

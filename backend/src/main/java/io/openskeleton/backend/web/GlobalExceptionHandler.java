@@ -4,6 +4,7 @@ import jakarta.persistence.OptimisticLockException;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -27,10 +28,11 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
  * {@link NotFoundException} → 404, method-security denial
  * ({@link AccessDeniedException}) → 403, {@link ConflictException} → 409,
  * optimistic-locking failures ({@link ObjectOptimisticLockingFailureException} /
- * {@link OptimisticLockException}) → 409, and a catch-all → 500. The remaining
- * data-layer-specific mappings named in the OSK-39 ticket
- * ({@code DataIntegrityViolationException} → 409, bad {@code ?sort=} / oversized-page
- * → 400) are deferred until they are needed — see the ticket note.
+ * {@link OptimisticLockException}) → 409, a database constraint clash
+ * ({@link DataIntegrityViolationException}, e.g. the email/phone identity uniqueness added
+ * by OSK-163) → 409, and a catch-all → 500. The other data-layer mapping named in the
+ * OSK-39 ticket (bad {@code ?sort=} / oversized-page → 400) is deferred until it is needed
+ * — see the ticket note.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -69,6 +71,28 @@ public class GlobalExceptionHandler {
         log.debug("Optimistic-locking conflict on concurrent update", ex);
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(
                 HttpStatus.CONFLICT, "The resource was updated concurrently. Reload the latest version and retry.");
+        pd.setTitle("Conflict");
+        return pd;
+    }
+
+    /**
+     * Database integrity violation → 409. A UNIQUE / foreign-key / NOT-NULL constraint the write
+     * clashed with surfaces from JPA as {@link DataIntegrityViolationException}. The case this
+     * mapping is added for (OSK-163): a request that would create a SECOND account for an identity
+     * already taken — the email/phone uniqueness enforced by the {@code V10} indexes. When
+     * provisioning cannot reconcile such a clash to the existing row (a genuine, unrecoverable
+     * conflict — see {@link io.openskeleton.backend.user.UserService#provisionFromToken}), the
+     * violation propagates here and becomes a 409 rather than a leaked 500: a uniqueness clash is
+     * a conflict with existing state, which is exactly what 409 means. The detail is generic so no
+     * constraint name or SQL fragment (attacker-controlled input can appear in it) is echoed to the
+     * caller; the real cause is logged server-side. This realises the {@code DataIntegrityViolation
+     * → 409} mapping that OSK-39 deferred until a feature needed it.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ProblemDetail handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        log.warn("Data integrity violation mapped to 409", ex);
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT, "The request conflicts with an existing account. It may already exist.");
         pd.setTitle("Conflict");
         return pd;
     }

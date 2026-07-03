@@ -86,7 +86,7 @@ class MeAccountLifecycleIntegrationTest {
     void freshlyProvisionedUserExposesLifecycleDefaults() throws Exception {
         String token = "lc-token-fresh";
         String uid = "uid-lc-fresh";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "fresh@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "fresh@lc.example.com"));
 
         // First GET provisions the row (OSK-76) — the two booleans default false and are always
         // present; the terms pair starts unset (rendered absent as with any null field).
@@ -103,7 +103,7 @@ class MeAccountLifecycleIntegrationTest {
     void patchMarksOnboardingCompletePersistsAndIsReflectedByGet() throws Exception {
         String token = "lc-token-onb";
         String uid = "uid-lc-onb";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "onb@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "onb@lc.example.com"));
 
         mvc.perform(patch("/api/v1/me/lifecycle")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -129,7 +129,7 @@ class MeAccountLifecycleIntegrationTest {
     void acceptTermsSetsVersionAndServerTimestamp() throws Exception {
         String token = "lc-token-terms";
         String uid = "uid-lc-terms";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "terms@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "terms@lc.example.com"));
 
         Instant before = Instant.now();
         mvc.perform(patch("/api/v1/me/lifecycle")
@@ -152,7 +152,7 @@ class MeAccountLifecycleIntegrationTest {
     void patchMarksAgeVerifiedPersistsAndIsReflectedByGet() throws Exception {
         String token = "lc-token-age";
         String uid = "uid-lc-age";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "age@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "age@lc.example.com"));
 
         mvc.perform(patch("/api/v1/me/lifecycle")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -173,7 +173,7 @@ class MeAccountLifecycleIntegrationTest {
     void lifecycleChangesAreRecordedInProfileHistory() throws Exception {
         String token = "lc-token-hist";
         String uid = "uid-lc-hist";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "hist@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "hist@lc.example.com"));
 
         // A single PATCH changing all three lifecycle facets → three PROFILE_UPDATED history
         // events (terms records the version only; the timestamp is derived state, not a field).
@@ -210,7 +210,7 @@ class MeAccountLifecycleIntegrationTest {
     void patchRejectsBlankTermsVersionWith400() throws Exception {
         String token = "lc-token-blank";
         String uid = "uid-lc-blank";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "blank@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "blank@lc.example.com"));
 
         // Whitespace-only version → bean-validation 400 problem+json (must not be blank).
         mvc.perform(patch("/api/v1/me/lifecycle")
@@ -232,7 +232,7 @@ class MeAccountLifecycleIntegrationTest {
     void reAcceptingSameTermsVersionIsAnIdempotentNoOp() throws Exception {
         String token = "lc-token-reterms";
         String uid = "uid-lc-reterms";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "reterms@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "reterms@lc.example.com"));
 
         // First acceptance stamps a timestamp and records one history event.
         mvc.perform(patch("/api/v1/me/lifecycle")
@@ -270,7 +270,7 @@ class MeAccountLifecycleIntegrationTest {
     void resubmittingCurrentBooleanStateIsANoOp() throws Exception {
         String token = "lc-token-noop";
         String uid = "uid-lc-noop";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "noop@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "noop@lc.example.com"));
 
         // Set onboarding complete once.
         mvc.perform(patch("/api/v1/me/lifecycle")
@@ -301,7 +301,7 @@ class MeAccountLifecycleIntegrationTest {
     void emptyLifecyclePatchChangesNothing() throws Exception {
         String token = "lc-token-empty";
         String uid = "uid-lc-empty";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "empty@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "empty@lc.example.com"));
 
         // A body with every field absent leaves all lifecycle state at its defaults and records
         // no history (the edits list is empty → no write).
@@ -327,7 +327,7 @@ class MeAccountLifecycleIntegrationTest {
     void repositoryRoundTripPersistsAndReadsBackTheLifecycleColumns() {
         // Direct entity/repository round-trip for the new columns (independent of the HTTP layer).
         Instant acceptedAt = Instant.now();
-        User user = new User("uid-lc-rt", "rt@example.com", "RT");
+        User user = new User("uid-lc-rt", "rt@lc.example.com", "RT");
         user.setOnboardingCompleted(true);
         user.setTermsAcceptedVersion("2026-01-01");
         user.setTermsAcceptedAt(acceptedAt);
@@ -349,7 +349,7 @@ class MeAccountLifecycleIntegrationTest {
     void defaultsHoldForAProvisionedUserWithNoLifecycleSet() {
         // A user inserted with no lifecycle set persists the boolean defaults (false) and null
         // terms pair — first-login upsert safe.
-        userRepository.saveAndFlush(new User("uid-lc-def", "def@example.com", null));
+        userRepository.saveAndFlush(new User("uid-lc-def", "def@lc.example.com", null));
 
         User found = userRepository.findByFirebaseUid("uid-lc-def").orElseThrow();
         assertThat(found.isOnboardingCompleted()).isFalse();

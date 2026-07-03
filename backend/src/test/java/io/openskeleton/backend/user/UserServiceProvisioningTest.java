@@ -117,6 +117,93 @@ class UserServiceProvisioningTest {
     }
 
     @Test
+    void provisionReconcilesByEmailAndAdoptsTheNewUidOntoTheExistingAccount() {
+        // OSK-163 linking policy: a brand-new uid presents an email that already belongs to an
+        // account. Provisioning must resolve to that SAME row (no insert) and adopt the new uid
+        // onto it, so every downstream firebase_uid lookup keeps working for the current session.
+        User existing = new User("uid-old", "shared@example.com", "Shared");
+        existing.setId(UUID.randomUUID());
+        when(userRepository.findByFirebaseUid("uid-new")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIgnoreCase("shared@example.com")).thenReturn(Optional.of(existing));
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        User result = userService.provisionFromToken("uid-new", "shared@example.com");
+
+        // Same row, new uid adopted — and the ONLY write is the relink save of that existing row
+        // (no fresh User was inserted).
+        assertThat(result).isSameAs(existing);
+        assertThat(result.getFirebaseUid()).isEqualTo("uid-new");
+        ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(captor.capture());
+        assertThat(captor.getValue()).isSameAs(existing);
+    }
+
+    @Test
+    void provisionReconcilesByPhoneWhenEmailIsAbsent() {
+        // Phone-only sign-in (no email on the token): reconcile by the phone identity instead,
+        // adopting the new uid onto the account that already owns that phone.
+        User existing = new User("uid-old-p", null, null);
+        existing.setId(UUID.randomUUID());
+        existing.setPhone("+15551230000");
+        when(userRepository.findByFirebaseUid("uid-new-p")).thenReturn(Optional.empty());
+        when(userRepository.findByPhone("+15551230000")).thenReturn(Optional.of(existing));
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        User result = userService.provisionFromToken("uid-new-p", null, "+15551230000");
+
+        assertThat(result).isSameAs(existing);
+        assertThat(result.getFirebaseUid()).isEqualTo("uid-new-p");
+        verify(userRepository).saveAndFlush(existing);
+        // Email was null, so the email lookup is never attempted (phone is the only identity).
+        verify(userRepository, never()).findByEmailIgnoreCase(any());
+    }
+
+    @Test
+    void provisionThreeArgInsertsNewUserCapturingPhoneWhenIdentityUnknown() {
+        // Neither the uid nor the email/phone identity is known → genuine new user: insert,
+        // capturing the token's phone so a LATER phone sign-in can reconcile back to this row.
+        when(userRepository.findByFirebaseUid("uid-3")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailIgnoreCase("three@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByPhone("+15559999999")).thenReturn(Optional.empty());
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        User result = userService.provisionFromToken("uid-3", "three@example.com", "+15559999999");
+
+        ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(captor.capture());
+        User inserted = captor.getValue();
+        assertThat(inserted.getFirebaseUid()).isEqualTo("uid-3");
+        assertThat(inserted.getEmail()).isEqualTo("three@example.com");
+        assertThat(inserted.getPhone()).isEqualTo("+15559999999");
+        assertThat(result).isSameAs(inserted);
+    }
+
+    @Test
+    void provisionRecoversFromIdentityRaceByRelinkingTheConcurrentlyCreatedRow() {
+        // The identity race: we see neither the uid nor the identity and attempt an INSERT, but a
+        // concurrent request has just created the identity under a DIFFERENT uid, so our insert
+        // trips the email unique index. Recovery: re-read by uid (still empty), then by identity
+        // (now visible) → relink the winner's row onto our uid. No duplicate, no surfaced 500.
+        User winner = new User("uid-winner", "raced@example.com", null);
+        winner.setId(UUID.randomUUID());
+        when(userRepository.findByFirebaseUid("uid-loser"))
+                .thenReturn(Optional.empty()) // step 1: not found by uid
+                .thenReturn(Optional.empty()); // recovery: still not found by uid (our uid never landed)
+        when(userRepository.findByEmailIgnoreCase("raced@example.com"))
+                .thenReturn(Optional.empty()) // step 2: not yet visible (winner uncommitted)
+                .thenReturn(Optional.of(winner)); // recovery: winner now committed and visible
+        when(userRepository.saveAndFlush(any(User.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate email")) // our insert loses
+                .thenAnswer(inv -> inv.getArgument(0)); // the relink save succeeds
+
+        User result = userService.provisionFromToken("uid-loser", "raced@example.com");
+
+        // Resolved to the single winning row, with our uid adopted onto it (linking policy).
+        assertThat(result).isSameAs(winner);
+        assertThat(result.getFirebaseUid()).isEqualTo("uid-loser");
+    }
+
+    @Test
     void updateProfileSetsDisplayNamePersistsAndRecordsExactlyOneHistoryEvent() {
         User user = new User("uid-p", "p@example.com", null);
         UUID userId = UUID.randomUUID();

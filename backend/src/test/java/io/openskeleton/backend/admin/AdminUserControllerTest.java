@@ -82,12 +82,12 @@ class AdminUserControllerTest {
 
         // The admin/user callers are identified purely by their token claim; no DB row needed.
         when(tokenVerifier.verify(eq(ADMIN_TOKEN)))
-                .thenReturn(new VerifiedToken("admin-uid", "admin@example.com", Role.ADMIN));
+                .thenReturn(new VerifiedToken("admin-uid", "admin@admin.example.com", Role.ADMIN));
         when(tokenVerifier.verify(eq(USER_TOKEN)))
-                .thenReturn(new VerifiedToken("user-uid", "user@example.com", Role.USER));
+                .thenReturn(new VerifiedToken("user-uid", "user@admin.example.com", Role.USER));
 
         // Seed one target user to administer.
-        User alice = new User("alice-uid", "alice@example.com", "Alice");
+        User alice = new User("alice-uid", "alice@admin.example.com", "Alice");
         aliceId = userRepository.save(alice).getId();
     }
 
@@ -152,7 +152,7 @@ class AdminUserControllerTest {
     @Test
     void adminListsUsersInThePagedEnvelopeWithTheExpectedFields() throws Exception {
         // Add a second user so the page clearly carries more than the seeded one.
-        User bob = new User("bob-uid", "bob@example.com", "Bob");
+        User bob = new User("bob-uid", "bob@admin.example.com", "Bob");
         bob.setRole(Role.ADMIN);
         userRepository.save(bob);
 
@@ -174,7 +174,7 @@ class AdminUserControllerTest {
 
     @Test
     void adminHonoursThePageSizeParam() throws Exception {
-        User bob = new User("bob-uid", "bob@example.com", "Bob");
+        User bob = new User("bob-uid", "bob@admin.example.com", "Bob");
         userRepository.save(bob);
 
         mvc.perform(get(USERS_PATH).param("size", "1").header(HttpHeaders.AUTHORIZATION, bearer(ADMIN_TOKEN)))
@@ -190,7 +190,7 @@ class AdminUserControllerTest {
         mvc.perform(get(USERS_PATH + "/" + aliceId).header(HttpHeaders.AUTHORIZATION, bearer(ADMIN_TOKEN)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(aliceId.toString()))
-                .andExpect(jsonPath("$.email").value("alice@example.com"))
+                .andExpect(jsonPath("$.email").value("alice@admin.example.com"))
                 .andExpect(jsonPath("$.displayName").value("Alice"))
                 .andExpect(jsonPath("$.role").value("USER"))
                 .andExpect(jsonPath("$.enabled").value(true))
@@ -338,7 +338,7 @@ class AdminUserControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(aliceId.toString()))
                 // The OSK-71 summary fields are still present…
-                .andExpect(jsonPath("$.email").value("alice@example.com"))
+                .andExpect(jsonPath("$.email").value("alice@admin.example.com"))
                 .andExpect(jsonPath("$.role").value("USER"))
                 .andExpect(jsonPath("$.enabled").value(true))
                 .andExpect(jsonPath("$.accountType").value("REAL"))

@@ -66,7 +66,7 @@ class ResilientAuthDegradationIntegrationTest {
         // The dependency hangs far beyond the 250ms timeout.
         when(delegate.verify(any())).thenAnswer(inv -> {
             Thread.sleep(30_000);
-            return new VerifiedToken("uid", "user@example.com");
+            return new VerifiedToken("uid", "user@resilient.example.com");
         });
 
         long start = System.nanoTime();
@@ -109,11 +109,11 @@ class ResilientAuthDegradationIntegrationTest {
     @Test
     void healthyVerifierStill200() throws Exception {
         // Sanity: the resilience wrapper is transparent on the happy path.
-        when(delegate.verify(any())).thenReturn(new VerifiedToken("uid-9", "ok@example.com"));
+        when(delegate.verify(any())).thenReturn(new VerifiedToken("uid-9", "ok@resilient.example.com"));
 
         mvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer good"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.uid").value("uid-9"))
-                .andExpect(jsonPath("$.email").value("ok@example.com"));
+                .andExpect(jsonPath("$.email").value("ok@resilient.example.com"));
     }
 }

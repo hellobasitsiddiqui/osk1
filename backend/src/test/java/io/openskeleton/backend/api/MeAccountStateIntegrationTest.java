@@ -87,7 +87,7 @@ class MeAccountStateIntegrationTest {
     void meSurfacesFirebaseOwnedAccountStateFromTheStubbedUserRecord() throws Exception {
         String token = "acct-token-full";
         String uid = "uid-acct-full";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "full@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "full@acct.example.com"));
 
         UserMetadata metadata = mock(UserMetadata.class);
         when(metadata.getLastSignInTimestamp()).thenReturn(LAST_SIGN_IN_MILLIS);
@@ -114,7 +114,7 @@ class MeAccountStateIntegrationTest {
     void meDegradesToNullFirebaseFieldsWhenTheLookupFails() throws Exception {
         String token = "acct-token-degrade";
         String uid = "uid-acct-degrade";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "degrade@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "degrade@acct.example.com"));
         // Firebase Admin unavailable / uid has no record → the SDK lookup throws; /me must still answer.
         when(firebaseAuth.getUser(eq(uid))).thenThrow(new RuntimeException("firebase down"));
 
@@ -122,7 +122,7 @@ class MeAccountStateIntegrationTest {
                 .andExpect(status().isOk())
                 // Persisted identity still present...
                 .andExpect(jsonPath("$.uid").value(uid))
-                .andExpect(jsonPath("$.email").value("degrade@example.com"))
+                .andExpect(jsonPath("$.email").value("degrade@acct.example.com"))
                 // ...but every Firebase-owned field gracefully degrades to null (omitted).
                 .andExpect(jsonPath("$.emailVerified").doesNotExist())
                 .andExpect(jsonPath("$.phoneVerified").doesNotExist())
@@ -136,11 +136,11 @@ class MeAccountStateIntegrationTest {
     void meStampsAndSurfacesLastActiveOnAuthenticatedRequests() throws Exception {
         String token = "acct-token-active";
         String uid = "uid-acct-active";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "active@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "active@acct.example.com"));
 
         // Seed the user with a STALE last_active (well outside the throttle window) so the interceptor
         // is due to refresh it. A distinct uid keeps the singleton throttle cache clean for this test.
-        User seeded = new User(uid, "active@example.com", null);
+        User seeded = new User(uid, "active@acct.example.com", null);
         Instant stale = Instant.now().minus(2, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MICROS);
         seeded.setLastActiveAt(stale);
         userRepository.save(seeded);
@@ -164,11 +164,11 @@ class MeAccountStateIntegrationTest {
     void meSurfacesThePersistedLastActiveValueThatRoundTripsThroughPostgres() throws Exception {
         String token = "acct-token-roundtrip";
         String uid = "uid-acct-roundtrip";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "rt@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "rt@acct.example.com"));
 
         // Seed a RECENT last_active (inside the throttle window) so the interceptor leaves it untouched
         // and /me surfaces exactly this value — letting us assert the DB round-trip precisely.
-        User seeded = new User(uid, "rt@example.com", null);
+        User seeded = new User(uid, "rt@acct.example.com", null);
         Instant recent = Instant.now().truncatedTo(ChronoUnit.MICROS);
         seeded.setLastActiveAt(recent);
         userRepository.save(seeded);
@@ -189,7 +189,7 @@ class MeAccountStateIntegrationTest {
         // stamp yet — lastActiveAt is null (omitted) on the first-ever request.
         String token = "acct-token-fresh";
         String uid = "uid-acct-fresh";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "fresh@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "fresh@acct.example.com"));
         when(firebaseAuth.getUser(any())).thenThrow(new RuntimeException("no firebase record"));
 
         mvc.perform(get("/api/v1/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))

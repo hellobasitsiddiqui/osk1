@@ -90,7 +90,7 @@ class EmailVerificationControllerTest {
     void unverifiedCallerGets202AndLinkIsMintedAndDispatched() throws Exception {
         String token = "tok-send";
         String uid = "uid-send";
-        String email = "alice@example.com";
+        String email = "alice@ev.example.com";
         String link = "https://verify.example/oob?code=abc123";
         authenticate(token, uid, email);
         stubUser(uid, email, false);
@@ -112,7 +112,7 @@ class EmailVerificationControllerTest {
     void alreadyVerifiedCallerGets200AndNothingIsSent() throws Exception {
         String token = "tok-verified";
         String uid = "uid-verified";
-        String email = "verified@example.com";
+        String email = "verified@ev.example.com";
         authenticate(token, uid, email);
         stubUser(uid, email, true);
 
@@ -131,7 +131,7 @@ class EmailVerificationControllerTest {
     void rapidRepeatIsRateLimitedWith429AndRetryAfter() throws Exception {
         String token = "tok-cooldown";
         String uid = "uid-cooldown";
-        String email = "cool@example.com";
+        String email = "cool@ev.example.com";
         authenticate(token, uid, email);
         stubUser(uid, email, false);
         when(firebaseAuth.generateEmailVerificationLink(eq(email))).thenReturn("https://verify.example/oob?code=z");
@@ -198,7 +198,7 @@ class EmailVerificationControllerTest {
     void firebaseUserLookupFailureDegradesTo503() throws Exception {
         String token = "tok-lookupfail";
         String uid = "uid-lookupfail";
-        authenticate(token, uid, "x@example.com");
+        authenticate(token, uid, "x@ev.example.com");
         when(firebaseAuth.getUser(eq(uid))).thenThrow(FirebaseAuthException.class);
 
         mvc.perform(post(PATH).header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -215,7 +215,7 @@ class EmailVerificationControllerTest {
     void linkMintingFailureDegradesTo503() throws Exception {
         String token = "tok-mintfail";
         String uid = "uid-mintfail";
-        String email = "mint@example.com";
+        String email = "mint@ev.example.com";
         authenticate(token, uid, email);
         stubUser(uid, email, false);
         when(firebaseAuth.generateEmailVerificationLink(eq(email))).thenThrow(FirebaseAuthException.class);

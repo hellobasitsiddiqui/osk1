@@ -36,6 +36,35 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByFirebaseUid(String firebaseUid);
 
     /**
+     * Find an <b>active</b> user by their email, matched <b>case-insensitively</b> (OSK-163).
+     *
+     * <p>This is the email half of identity reconciliation: when Firebase presents a brand-new
+     * uid for an email that already belongs to an account, JIT provisioning uses this to resolve
+     * to that existing account rather than minting a duplicate. The predicate is written as
+     * {@code lower(email) = lower(:email)} precisely so it lines up with — and can use — the
+     * functional unique index {@code ux_users_email_lower_active} that {@code V10} creates over
+     * {@code lower(email)}; a Spring-derived {@code ...IgnoreCase} finder would emit
+     * {@code upper(...)} instead and could not use that index.
+     *
+     * <p>Being an entity (HQL) query, Hibernate appends the {@code @SQLRestriction} on
+     * {@link User}, so — like every other finder here — it only ever returns an <i>active</i>
+     * (non-soft-deleted) row. The active-scoped unique index guarantees at most one such row, so
+     * an {@link Optional} return is safe (never a non-unique-result error on well-formed data).
+     */
+    @Query("select u from User u where lower(u.email) = lower(:email)")
+    Optional<User> findByEmailIgnoreCase(@Param("email") String email);
+
+    /**
+     * Find an <b>active</b> user by their exact phone number (OSK-163) — the phone half of
+     * identity reconciliation, mirroring {@link #findByEmailIgnoreCase(String)}. Phone is stored
+     * in canonical E.164 form (as Firebase supplies it), so an exact match is the right identity
+     * comparison; no case/format normalisation is applied. Derived from the method name and, like
+     * the other finders, restricted to active rows by the entity-level {@code @SQLRestriction};
+     * the active-scoped unique index {@code ux_users_phone_active} guarantees at most one match.
+     */
+    Optional<User> findByPhone(String phone);
+
+    /**
      * Load a user by id <b>regardless of soft-delete state</b> — the restore-path
      * escape hatch. This is a native query precisely so it bypasses the entity-level
      * {@code @SQLRestriction("deleted_at is null")} (which only applies to Hibernate's

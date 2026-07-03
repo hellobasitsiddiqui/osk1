@@ -86,7 +86,7 @@ class MeProfileFieldsIntegrationTest {
     void freshlyProvisionedUserExposesNullProfileFieldsAndDefaultNotificationPreference() throws Exception {
         String token = "prof-token-fresh";
         String uid = "uid-prof-fresh";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "fresh@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "fresh@prof.example.com"));
 
         // First GET provisions the row (OSK-76) — the new fields start unset, and the
         // notification preference defaults to EMAIL (its NOT NULL column default).
@@ -107,7 +107,7 @@ class MeProfileFieldsIntegrationTest {
     void patchSetsEveryNewFieldPersistsAndIsReflectedByGet() throws Exception {
         String token = "prof-token-set";
         String uid = "uid-prof-set";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "set@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "set@prof.example.com"));
 
         String body =
                 """
@@ -162,7 +162,7 @@ class MeProfileFieldsIntegrationTest {
     void patchIsSparseAndDoesNotClobberUnmentionedFields() throws Exception {
         String token = "prof-token-sparse";
         String uid = "uid-prof-sparse";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "sparse@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "sparse@prof.example.com"));
 
         // Set two fields first.
         mvc.perform(patch("/api/v1/me")
@@ -188,7 +188,7 @@ class MeProfileFieldsIntegrationTest {
     @Test
     void patchRejectsOutOfRangeAgeWith400() throws Exception {
         String token = "prof-token-age";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken("uid-prof-age", "age@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken("uid-prof-age", "age@prof.example.com"));
 
         // Too old (> 120) → bean-validation 400 problem+json.
         mvc.perform(patch("/api/v1/me")
@@ -216,7 +216,7 @@ class MeProfileFieldsIntegrationTest {
     @Test
     void patchRejectsInvalidTimezoneWith400() throws Exception {
         String token = "prof-token-tz";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken("uid-prof-tz", "tz@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken("uid-prof-tz", "tz@prof.example.com"));
 
         mvc.perform(patch("/api/v1/me")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -231,7 +231,7 @@ class MeProfileFieldsIntegrationTest {
     @Test
     void patchRejectsMalformedLocaleWith400() throws Exception {
         String token = "prof-token-loc";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken("uid-prof-loc", "loc@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken("uid-prof-loc", "loc@prof.example.com"));
 
         // Underscore is not a valid BCP-47 separator (should be en-GB).
         mvc.perform(patch("/api/v1/me")
@@ -247,7 +247,7 @@ class MeProfileFieldsIntegrationTest {
     void editsToNewFieldsAreRecordedInProfileHistory() throws Exception {
         String token = "prof-token-hist";
         String uid = "uid-prof-hist";
-        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "hist@example.com"));
+        when(tokenVerifier.verify(eq(token))).thenReturn(new VerifiedToken(uid, "hist@prof.example.com"));
 
         // A single PATCH changing three fields → three PROFILE_UPDATED history events.
         mvc.perform(patch("/api/v1/me")
@@ -278,7 +278,7 @@ class MeProfileFieldsIntegrationTest {
     @Test
     void repositoryRoundTripPersistsAndReadsBackTheNewColumns() {
         // Direct entity/repository round-trip for the new columns (independent of the HTTP layer).
-        User user = new User("uid-prof-rt", "rt@example.com", "RT");
+        User user = new User("uid-prof-rt", "rt@prof.example.com", "RT");
         user.setFirstName("Grace");
         user.setLastName("Hopper");
         user.setCity("New York");
@@ -311,7 +311,7 @@ class MeProfileFieldsIntegrationTest {
     void provisionedUserWithoutAnyPreferenceDefaultsToEmail() {
         // A user inserted with no notification preference set persists the EMAIL default
         // (the entity field default + the NOT NULL DEFAULT column) — first-login upsert safe.
-        userRepository.saveAndFlush(new User("uid-prof-def", "def@example.com", null));
+        userRepository.saveAndFlush(new User("uid-prof-def", "def@prof.example.com", null));
 
         User found = userRepository.findByFirebaseUid("uid-prof-def").orElseThrow();
         assertThat(found.getNotificationPreference()).isEqualTo(NotificationPreference.EMAIL);
