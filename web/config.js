@@ -118,13 +118,13 @@ window.__APP_CONFIG__ = {
   // reads this at runtime to initialise the Firebase JS SDK and gate the protected
   // /app page (sign-in with email/password or Google, then call /api/v1/me).
   //
-  // INJECTED-LATER pattern (same as apiBaseUrl above): `apiKey` and `appId` are the
-  // per-Web-App identifiers minted when a human registers a Firebase WEB app in the
-  // console (ticket OSK-92; needs firebase-scoped ADC, ticket OSK-38). They are left
-  // EMPTY here on purpose — DO NOT invent placeholder values. auth.js treats an empty
-  // apiKey as "auth not configured": it never crashes, it just renders a clear notice
-  // and keeps the protected content hidden until these are filled in (by the human or
-  // by the deploy pipeline, exactly like apiBaseUrl).
+  // WAVE-(-1) pattern (see docs/agents/BRINGUP-RUNBOOK.md): `apiKey` and `appId` are the
+  // per-Web-App identifiers minted when a human registers a Firebase WEB app (ticket
+  // OSK-92; needs a firebase-scoped login/reauth, ticket OSK-38). For a FRESH replay they
+  // start EMPTY and auth.js treats an empty apiKey as "auth not configured" — it never
+  // crashes, it just renders a clear notice and keeps the protected content hidden until
+  // the values are filled in. Here they are WIRED (below) from the registered
+  // "OpenSkeleton Web" app — do this ONCE at bring-up, not per-ticket.
   //
   // Note: the Firebase web apiKey is NOT a classic secret — it is a public client
   // identifier safe to ship in static assets (access is enforced by Firebase Auth +
@@ -137,10 +137,14 @@ window.__APP_CONFIG__ = {
   //   projectId         — the GCP/Firebase project id.
   //   messagingSenderId — the project number (public, used by the SDK).
   firebase: {
-    apiKey: "", // OSK-92: injected by the Firebase Web App registration (human-gated).
+    // OSK-92: wired from the registered "OpenSkeleton Web" Firebase Web App
+    // (firebase apps:sdkconfig). apiKey + appId are PUBLIC client identifiers, safe
+    // to commit; access is enforced by Firebase Auth + backend token verification.
+    apiKey: "AIzaSyA8_Ac25T4EHsdhkXRZ6_bQlZcBprF1HKc",
     authDomain: "openskeleton-one.firebaseapp.com",
     projectId: "openskeleton-one",
+    storageBucket: "openskeleton-one.firebasestorage.app",
     messagingSenderId: "476227744481",
-    appId: "", // OSK-92: injected by the Firebase Web App registration (human-gated).
+    appId: "1:476227744481:web:41667628f03355f898fda0",
   },
 };

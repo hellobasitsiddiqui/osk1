@@ -102,19 +102,41 @@ runtime SA `476227744481-compute@developer.gserviceaccount.com`, deploy SA
         --role="roles/iam.serviceAccountTokenCreator" --project=openskeleton-one
       ```
 
-## 4 — Firebase auth + web config (OSK-44 / OSK-74) — closes report gap G2
+## 4 — Firebase auth + web config (OSK-92 / OSK-44 / OSK-74 / OSK-38) — closes report gap G2
 
+Do this ONCE at bring-up, **not per-ticket**. The entire web login chain (auth guard,
+admin console, profile/history pages, onboarding + terms/completion gates, account
+badges) is built and code-complete but stays "dark" (renders the graceful *auth not
+configured* state) until the web-app config below is wired. This was the single biggest
+mid-run wall in round 1 (LESSONS **H21**) — pulling it to wave-−1 is the fix.
+
+- [ ] 🧑 **Re-auth firebase-tools.** This is a token SEPARATE from the gcloud ADC in §1
+      — being "logged in" is not enough; a stale token fails every API call with
+      `Your credentials are no longer valid. Please run firebase login --reauth`. Run in
+      a REAL terminal (interactive — the browser handoff can't happen in a headless/agent
+      shell):
+      ```
+      npx -y firebase-tools login --reauth
+      ```
+- [ ] 🧑/🤖 **Register the web app + read its config** (idempotent — reuse the existing
+      one if `apps:list` already shows a WEB app; agent can run these once you're re-authed):
+      ```
+      npx -y firebase-tools apps:list --project <PROJECT>
+      npx -y firebase-tools apps:create WEB "OpenSkeleton Web" --project <PROJECT>   # only if none
+      npx -y firebase-tools apps:sdkconfig WEB <APP_ID> --project <PROJECT>
+      ```
+      `apiKey` + `appId` are PUBLIC client identifiers (safe to commit — access is
+      enforced by Firebase Auth + backend token verification, not by hiding them).
+- [ ] 🤖 **Wire them into [`web/config.js`](../../web/config.js)** `firebase` block
+      (`apiKey`, `appId`, `storageBucket`); `authDomain`/`projectId`/`messagingSenderId`
+      are known project identifiers, already prefilled. `hosting-deploy.yml` rewrites only
+      `apiBaseUrl`, so the firebase block ships **as committed** — `config.js` IS the
+      committed home for this config (this resolves the old G2 "delivery gap"). Merge →
+      `hosting-deploy.yml` publishes → login is live.
 - [ ] 🧑 **Enable the Email/Password sign-in provider** — Firebase console →
-      Authentication → Sign-in method (or the Identity Platform admin API). Round-1
-      state: "Email/Password pending" ([`infra/gcp.env`](../../infra/gcp.env) header).
-- [ ] 🧑 **Obtain the web-app config** (`apiKey`, `authDomain`, `projectId`, …) —
-      Firebase console → Project settings → Your apps → Web app. The web login
-      (OSK-74) needs it. **⚠️ Delivery gap:** the repo currently has **no** committed
-      home for this config and no documented inject step ([`web/config.js`](../../web/config.js)
-      carries only `apiBaseUrl`/`buildSha`/`alert`). Until a ticket owns it, treat
-      "where the Firebase web config lives + how it reaches the built site" as an
-      open decision (commit vs deploy-time inject like `apiBaseUrl`). See
-      [`SEED-REPLAY-DRYRUN.md` G2](SEED-REPLAY-DRYRUN.md).
+      Authentication → Sign-in method → Email/Password (or the Identity Platform admin
+      API: `PATCH .../v2/projects/<PROJECT>/config` with `signIn.email.enabled=true`).
+      Add Google / other social providers later (OSK-131).
 
 ## 5 — Public-access org policy (OSK-51) — closes report gap G3
 
