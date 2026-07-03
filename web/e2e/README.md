@@ -19,6 +19,7 @@ web/e2e/
 ├── playwright.config.ts   # headless Chromium; boots the static server; baseURL; projects
 ├── static-server.mjs      # zero-dep static server, mirrors firebase.json rewrites
 ├── auth-guard.simulation.cjs   # headless Node sim of the OSK-74 guard (no browser)
+├── completion-gate.simulation.cjs # headless Node sim of the OSK-136 first-login gate
 ├── history.simulation.cjs      # headless Node sim of the OSK-101 profile-history view
 ├── tests/
 │   ├── smoke.spec.ts      # the static-pages smoke walkthrough
@@ -131,6 +132,30 @@ without a live sign-in:
   signed-in fetch/render path the browser can't reach in CI. It renders into a fake DOM and
   uses a stubbed `fetch`. Run it with `node history.simulation.cjs` (exits non-zero on any
   failure).
+
+## First-login profile-completion gate (OSK-136) — headless simulation
+
+The protected `/app` page also loads `web/completion-gate.js`, a **blocking first-login
+gate**: when a signed-in user's `GET /api/v1/me` is missing a required field (name / city /
+age) it overlays a minimal form and blocks entry until the fields are `PATCH`ed. A live run
+needs the human Firebase apiKey (**OSK-92**), so — like the guard — its pure logic, its
+fetch/PATCH client and its DOM builders are exported and covered headlessly:
+
+- **`completion-gate.simulation.cjs`** — a zero-dependency Node script that `require()`s the
+  helpers `completion-gate.js` exports and asserts, with a fake DOM + a **stubbed fetch**:
+  required-field detection (`getMissingRequiredFields`), the sparse **`buildPatch`** (only
+  entered fields; age coerced to a **number**), RFC-7807 **`parseProblemErrors`** (the
+  `errors: ["field: message"]` shape), the `computeGateView` decision (inactive / loading /
+  **gate** / complete / fail-open-on-error), and `fetchProfile` / `submitProfile` request
+  shapes (method, URL, `Authorization: Bearer`, JSON body). It then drives the whole
+  **controller** end-to-end: the gate **shows** when a field is missing, stays **hidden**
+  when all are present, **submit PATCHes only the entered fields**, renders **inline 400**
+  field errors while staying open, and **handles 401** without dismissing. Run it with
+  `node completion-gate.simulation.cjs` (exits non-zero on any failure).
+
+The gate is **dormant** when signed-out / not-configured, so it does not affect the
+existing `tests/auth-guard.spec.ts` "not configured" assertions. When OSK-92 supplies the
+apiKey, a real first-login walkthrough can drop in as a `tests/*.spec.ts` — no infra change.
 
 ## When it runs
 

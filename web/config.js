@@ -94,6 +94,26 @@ window.__APP_CONFIG__ = {
     autoStartFirstRun: true,
   },
 
+  // OSK-136: first-login profile-completion gate (web/completion-gate.js). OPTIONAL — the
+  // gate ships with safe defaults and works with this block absent, so it exists only to
+  // give an operator runtime control without a code change. Read via
+  // window.__APP_CONFIG__.completionGate on the protected /app page.
+  //
+  //   enabled        — master on/off for the whole gate. false = never blocks anyone.
+  //   autoStart      — whether the gate auto-mounts on first login when the profile is
+  //                    incomplete. Set false to opt out of auto-mount and drive the gate
+  //                    programmatically via window.OSKCompletionGate (e.g. to let an
+  //                    orchestrator sequence it after the OSK-78 terms gate) — the module
+  //                    stays loaded and idempotent either way.
+  //   requiredFields — which profile fields must be present before entering the app.
+  //                    Only known fields (firstName, city, age) are honoured; anything
+  //                    else is ignored. Defaults to name + location + age when omitted.
+  completionGate: {
+    enabled: true,
+    autoStart: true,
+    requiredFields: ["firstName", "city", "age"],
+  },
+
   // OSK-74: Firebase Web App config for the web auth guard (web/auth.js). auth.js
   // reads this at runtime to initialise the Firebase JS SDK and gate the protected
   // /app page (sign-in with email/password or Google, then call /api/v1/me).
