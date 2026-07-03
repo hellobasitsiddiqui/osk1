@@ -934,5 +934,17 @@
       Self-contained + additive; identical include across every tour page.
     -->
     <script src="/onboarding.js"></script>
+    <!--
+      OSK-150: push-notification client. Self-contained + additive like the modules above.
+      On the Capacitor Android shell it requests the OS notification permission, registers
+      for push, obtains the FCM token and registers it with the backend
+      (POST /api/v1/me/devices, OSK-154) once the user is signed in — and deregisters
+      (DELETE) on sign-out — delegating auth to window.OSKAuth (loaded in <head>). In a
+      plain browser there is no push plugin, so mode() is NONE and this is a pure no-op:
+      safe to serve on the live web deploy. Tapped-notification deep-link routing is
+      OSK-156; this only keeps a documented seam. Live delivery is gated on OSK-165
+      (FCM + google-services.json — a human step, deliberately not committed).
+    -->
+    <script src="/push-client.js"></script>
   </body>
 </html>
