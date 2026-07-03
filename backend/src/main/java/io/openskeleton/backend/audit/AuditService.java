@@ -94,4 +94,42 @@ public class AuditService {
     public Page<AuditEvent> findByActorAndAction(String actorFirebaseUid, AuditAction action, Pageable pageable) {
         return auditRepository.findByActorFirebaseUidAndAction(actorFirebaseUid, action, pageable);
     }
+
+    /**
+     * Read seam for the admin audit browser ({@code GET /api/v1/admin/audit}, OSK-93): page
+     * over the whole append-only log, optionally narrowed by target entity and/or action.
+     *
+     * <p>This is the single place the two optional filters compose, so the controller stays a
+     * thin pass-through and each filter combination maps to the matching indexed repository
+     * finder rather than an in-memory scan:
+     *
+     * <ul>
+     *   <li>both {@code targetId} and {@code action} → {@link AuditRepository#findByTargetIdAndAction};</li>
+     *   <li>{@code targetId} only → {@link AuditRepository#findByTargetId};</li>
+     *   <li>{@code action} only → {@link AuditRepository#findByAction};</li>
+     *   <li>neither → the full log via {@link AuditRepository#findAll(Pageable)}.</li>
+     * </ul>
+     *
+     * <p>Read-only and side-effect free, so it upholds the append-only guarantee; ordering
+     * (newest-first) and the size cap come from the caller's {@link Pageable} via the shared
+     * pagination convention (OSK-87).
+     *
+     * @param targetId the affected entity's id to filter by, or {@code null} for no target filter
+     * @param action the action to filter by, or {@code null} for no action filter
+     * @param pageable page/size/sort from the shared pagination convention
+     * @return the requested page of matching events
+     */
+    @Transactional(readOnly = true)
+    public Page<AuditEvent> findEvents(String targetId, AuditAction action, Pageable pageable) {
+        if (targetId != null && action != null) {
+            return auditRepository.findByTargetIdAndAction(targetId, action, pageable);
+        }
+        if (targetId != null) {
+            return auditRepository.findByTargetId(targetId, pageable);
+        }
+        if (action != null) {
+            return auditRepository.findByAction(action, pageable);
+        }
+        return auditRepository.findAll(pageable);
+    }
 }
