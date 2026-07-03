@@ -97,21 +97,27 @@
 			<version>9.9.0</version>
 		</dependency>
 
-		<!-- Spring Security *core only* (OSK-79 RBAC): we need the framework's
-		     GrantedAuthority / SimpleGrantedAuthority value types so a caller's role
-		     is modelled as a first-class Spring authority (ROLE_USER / ROLE_ADMIN),
-		     ready for method-level checks in OSK-71. We deliberately add ONLY
-		     spring-security-core and NOT spring-boot-starter-security: the starter (via
-		     spring-security-config / -web) would switch on Boot's SecurityAutoConfiguration
-		     default servlet filter chain and change the whole app's request handling — the
-		     exact thing FirebaseAuthenticationFilter (a plain OncePerRequestFilter) was
-		     built to avoid. Without -config/-web on the classpath no filter chain is
-		     created, so the existing default-deny/permit-list behaviour is unchanged; we
-		     use the library purely for its authority types. Version is managed by the Boot
-		     parent BOM. -->
+		<!-- Spring Security core + config, NO web (OSK-79 RBAC, extended by OSK-71):
+		     OSK-79 added spring-security-core for the GrantedAuthority / SimpleGrantedAuthority
+		     value types (a caller's role as ROLE_USER / ROLE_ADMIN). OSK-71 adds
+		     spring-security-config for @EnableMethodSecurity + @PreAuthorize, so the admin
+		     endpoints can be guarded at the method boundary. We STILL deliberately do NOT pull
+		     in spring-security-web / spring-boot-starter-security: those would switch on Boot's
+		     SecurityAutoConfiguration servlet filter chain and change the whole app's request
+		     handling — the exact thing FirebaseAuthenticationFilter (a plain OncePerRequestFilter)
+		     was built to avoid. Authorization is therefore enforced purely by method-security AOP
+		     over the SecurityContext the auth filter populates; there is no Spring web filter
+		     chain. Because -config brings @EnableWebSecurity onto the classpath, Boot's web
+		     security auto-configuration is switched off explicitly (spring.autoconfigure.exclude
+		     in application.yml) so it does not try to build a filter chain that -web (absent)
+		     would be needed for. Versions are managed by the Boot parent BOM. -->
 		<dependency>
 			<groupId>org.springframework.security</groupId>
 			<artifactId>spring-security-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-config</artifactId>
 		</dependency>
 
 		<!-- Resilience4j (OSK-65): graceful degradation for the ONE outbound

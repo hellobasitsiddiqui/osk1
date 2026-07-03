@@ -6,6 +6,18 @@
 spring:
   application:
     name: backend
+  # --- Security auto-configuration: method security only, no web chain (OSK-71) --
+  # OSK-71 adds spring-security-config for @EnableMethodSecurity/@PreAuthorize but
+  # deliberately keeps NO spring-security-web (see pom.xml). Having -config on the
+  # classpath makes Boot's SecurityAutoConfiguration try to enable a web security
+  # filter chain (@EnableWebSecurity), which needs -web and would otherwise fail /
+  # change request handling. Exclude the servlet security auto-configs so only the
+  # method-level authorization we opt into via @EnableMethodSecurity is active; the
+  # hand-rolled FirebaseAuthenticationFilter remains the sole request-path auth gate.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   # --- Persistence / JPA (OSK-32) ----------------------------------------------
   # Flyway owns the schema (it is auto-enabled by Boot and runs its db/migration
   # scripts on startup). Hibernate is therefore locked to `validate`: it never

@@ -1,6 +1,7 @@
 package io.openskeleton.backend.auth;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.openskeleton.backend.user.UserRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -26,11 +27,14 @@ public class FirebaseAuthConfig {
      *     production; a mock in {@code @SpringBootTest}s that override the bean)
      * @param objectMapper the Spring-managed mapper (carries the {@code ProblemDetail}
      *     Jackson mixin) used to render the 401 body as {@code problem+json}
+     * @param userRepository consulted by the filter to enforce the caller's {@code enabled}
+     *     flag (OSK-71) — a disabled account is rejected with a 403
      * @return the auth filter, registered by Boot across the servlet chain and scoped
      *     to {@code /api/v1/**} internally by the filter itself
      */
     @Bean
-    FirebaseAuthenticationFilter firebaseAuthenticationFilter(TokenVerifier tokenVerifier, ObjectMapper objectMapper) {
-        return new FirebaseAuthenticationFilter(tokenVerifier, objectMapper);
+    FirebaseAuthenticationFilter firebaseAuthenticationFilter(
+            TokenVerifier tokenVerifier, ObjectMapper objectMapper, UserRepository userRepository) {
+        return new FirebaseAuthenticationFilter(tokenVerifier, objectMapper, userRepository);
     }
 }

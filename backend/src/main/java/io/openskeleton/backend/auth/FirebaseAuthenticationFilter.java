@@ -2,17 +2,22 @@ package io.openskeleton.backend.auth;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.openskeleton.backend.auth.TokenVerifier.VerifiedToken;
+import io.openskeleton.backend.user.User;
+import io.openskeleton.backend.user.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
@@ -24,18 +29,32 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * {@link TokenVerifier}, and — on success — stashes the caller's {@code uid}/{@code
  * email} and their Spring authorities ({@code ROLE_USER}/{@code ROLE_ADMIN}, mapped
  * from the Firebase {@code role} custom claim — OSK-79) as request attributes so
- * downstream handlers (e.g. {@code /api/v1/me}) can read them. On a missing/malformed
- * header or a token that fails verification it
- * short-circuits the chain with an RFC 7807 {@code 401} in the same
+ * downstream handlers (e.g. {@code /api/v1/me}) can read them. It also establishes those
+ * authorities in the Spring {@code SecurityContext} so method-level authorization
+ * ({@code @PreAuthorize} on the admin endpoints — OSK-71) can enforce them, and clears the
+ * context again once the request completes. On a missing/malformed header or a token that
+ * fails verification it short-circuits the chain with an RFC 7807 {@code 401} in the same
  * {@code application/problem+json} shape the rest of the API uses (OSK-39 /
  * {@code GlobalExceptionHandler}).
  *
- * <p><b>Why a plain {@link OncePerRequestFilter} and not Spring Security:</b> the
- * whole security requirement here is "verify one bearer token on one path prefix".
- * Pulling in {@code spring-boot-starter-security} would switch on a full filter chain
- * and default behaviours across the app for no benefit; a single, explicit filter is
- * smaller, easier to reason about, and matches the existing {@code
- * SecurityHeadersFilter} approach in this codebase.
+ * <p><b>Account status gate (OSK-71):</b> a token can be valid while the account behind it
+ * has been disabled by an admin. Firebase does not know about the platform's {@code enabled}
+ * flag, so this filter — the one choke point every {@code /api/v1/**} request passes — is
+ * where it is enforced: after verifying the token it consults the persisted user and rejects
+ * a <i>disabled</i> account with a 403 (a caller that has not been provisioned yet is let
+ * through so JIT provisioning — OSK-76 — still creates the row). This is what makes "disable
+ * a user" actually take effect.
+ *
+ * <p><b>Why a plain {@link OncePerRequestFilter} and not a Spring Security web chain:</b>
+ * the whole <i>authentication</i> requirement here is "verify one bearer token on one path
+ * prefix". Pulling in {@code spring-boot-starter-security} / {@code spring-security-web}
+ * would switch on a full servlet filter chain and default behaviours across the app for no
+ * benefit; a single, explicit filter is smaller, easier to reason about, and matches the
+ * existing {@code SecurityHeadersFilter} approach in this codebase. <i>Authorization</i>,
+ * by contrast, does reuse Spring Security — but only its method-level machinery
+ * ({@code @EnableMethodSecurity} + {@code @PreAuthorize}, OSK-71), which reads the
+ * {@code SecurityContext} this filter populates. So there is still no web filter chain; this
+ * filter simply bridges the verified principal into the context that method security checks.
  *
  * <p><b>Why it is scoped to {@code /api/v1/**} (default-deny for the API, not the
  * whole app):</b> the permit-list is expressed by <i>not</i> filtering anything else.
@@ -87,6 +106,7 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
 
     private final TokenVerifier tokenVerifier;
     private final ObjectMapper objectMapper;
+    private final UserRepository userRepository;
 
     /**
      * @param tokenVerifier the seam that actually validates the token (real Firebase
@@ -94,10 +114,14 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
      * @param objectMapper the Spring-managed mapper — it carries the {@code
      *     ProblemDetail} Jackson mixin, so serialising the 401 yields correct
      *     {@code problem+json}
+     * @param userRepository used only to consult the caller's persisted {@code enabled}
+     *     flag so a disabled account is locked out (OSK-71 — see {@link #doFilterInternal})
      */
-    public FirebaseAuthenticationFilter(TokenVerifier tokenVerifier, ObjectMapper objectMapper) {
+    public FirebaseAuthenticationFilter(
+            TokenVerifier tokenVerifier, ObjectMapper objectMapper, UserRepository userRepository) {
         this.tokenVerifier = tokenVerifier;
         this.objectMapper = objectMapper;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -153,15 +177,45 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 3) Authenticated. Publish the identity + authorities for downstream handlers
+        // 3) Account status gate (OSK-71): a token can be perfectly valid while the
+        //    account behind it has been disabled by an admin. Because Firebase has no
+        //    concept of our `enabled` flag, the only place it can be enforced is here —
+        //    the single choke point every /api/v1/** request passes through. Look the
+        //    caller up by uid: if a row EXISTS and is disabled, reject with 403; if no row
+        //    exists yet (a brand-new caller not JIT-provisioned — OSK-76), let it through
+        //    so provisioning still happens (a fresh user is created enabled). This is one
+        //    indexed lookup by the unique firebase_uid; it deliberately trades a small
+        //    per-request read for making "disable a user" actually mean something.
+        Optional<User> account = userRepository.findByFirebaseUid(verified.uid());
+        if (account.isPresent() && !account.get().isEnabled()) {
+            log.debug("Rejecting request for disabled account uid '{}'.", verified.uid());
+            writeForbidden(response, "This account has been disabled.");
+            return;
+        }
+
+        // 4) Authenticated. Publish the identity + authorities for downstream handlers
         //    and continue. The role custom claim (resolved on the verified principal by
         //    RoleClaimMapper) is mapped to a Spring ROLE_* authority here (OSK-79), so
         //    the request carries who the caller is AND what role they hold — with the
         //    least-privilege ROLE_USER default already applied when the claim is absent.
         request.setAttribute(UID_ATTRIBUTE, verified.uid());
         request.setAttribute(EMAIL_ATTRIBUTE, verified.email());
-        request.setAttribute(AUTHORITIES_ATTRIBUTE, RoleClaimMapper.authoritiesFrom(verified.role()));
-        filterChain.doFilter(request, response);
+        var authorities = RoleClaimMapper.authoritiesFrom(verified.role());
+        request.setAttribute(AUTHORITIES_ATTRIBUTE, authorities);
+
+        // Also establish the Spring SecurityContext (OSK-71) so method-level authorization
+        // (@PreAuthorize on the admin endpoints) can read the caller's authorities. The
+        // token is already verified, so this is a pre-authenticated principal: uid as the
+        // principal, no credentials, the mapped ROLE_* authorities. We clear the context in
+        // a finally so nothing leaks onto a pooled request thread (there is no Spring
+        // security filter chain to manage the context for us — this filter owns it).
+        var authentication = new UsernamePasswordAuthenticationToken(verified.uid(), null, authorities);
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+        try {
+            filterChain.doFilter(request, response);
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
     }
 
     /**
@@ -176,6 +230,22 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
         problem.setTitle("Unauthorized");
 
         response.setStatus(HttpStatus.UNAUTHORIZED.value());
+        response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+        objectMapper.writeValue(response.getWriter(), problem);
+    }
+
+    /**
+     * Writes an RFC 7807 {@code 403} response (media type
+     * {@code application/problem+json}) for a valid token whose account has been disabled
+     * (OSK-71). The caller authenticated successfully but is not permitted to proceed, so
+     * this is a 403 (not a 401): re-authenticating would not help. Same {@link ProblemDetail}
+     * shape as the 401/503 paths for a uniform client error model.
+     */
+    private void writeForbidden(HttpServletResponse response, String detail) throws IOException {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, detail);
+        problem.setTitle("Forbidden");
+
+        response.setStatus(HttpStatus.FORBIDDEN.value());
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
         objectMapper.writeValue(response.getWriter(), problem);
     }
