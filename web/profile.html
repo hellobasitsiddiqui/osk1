@@ -71,6 +71,13 @@
       DOMContentLoaded internally, so load order relative to the body markup is safe.
     -->
     <script src="/profile.js"></script>
+    <!--
+      OSK-70: account-state badges, reused from the /app view. Self-contained ONE include —
+      injects its own styles (web/badges.css) and renders the email/age/MFA status row into
+      the #account-badges mount above. Loaded after auth.js + config.js so OSKAuth + config
+      exist. mfaEnabled === null shows as "unknown", never "off".
+    -->
+    <script src="/badges.js"></script>
     <style>
       /* Shared palette + surfaces with app/status/ops/help so all the pages are visually
          identical. Same Primer green/amber/red status hues. */
@@ -492,6 +499,12 @@
           <dt>Email</dt><dd id="pf-email">—</dd>
           <dt>Role</dt><dd id="pf-role">—</dd>
         </dl>
+
+        <!--
+          OSK-70: account-state badges (email-verified / age-verified / MFA), reused from the
+          /app view. Populated by web/badges.js (reads GET /api/v1/me). Hidden until rendered.
+        -->
+        <ul id="account-badges" class="acct-badges" aria-label="Account status" hidden></ul>
 
         <!--
           Loading / empty status line. Shown while GET /api/v1/me is in flight; also the
