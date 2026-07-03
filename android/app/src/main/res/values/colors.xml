@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  colors.xml — OSK-158.
+
+  splash_background is the OpenSkeleton dark-palette canvas colour (the exact
+  value of the "bg" CSS variable in web/ index.html: #0d1117). It is referenced by the launch theme
+  (styles.xml → AppTheme.NoActionBarLaunch → windowSplashScreenBackground) so the
+  Android 12+ system splash window is painted the same dark colour as the branded
+  splash image (@drawable/splash) and the web app itself — giving one seamless
+  colour across the cold-start phases with no white flash.
+
+  Stored as #AARRGGBB (fully opaque) as Android splash background colours require
+  an explicit alpha channel.
+-->
+<resources>
+    <color name="splash_background">#FF0D1117</color>
+</resources>

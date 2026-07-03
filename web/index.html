@@ -733,5 +733,14 @@
       Self-contained + additive; identical include across every tour page.
     -->
     <script src="/onboarding.js"></script>
+    <!--
+      OSK-158: native mobile splash "hide-on-ready" hook. index.html is the cold-
+      start entry point loaded by the Capacitor Android WebView, so once this page
+      is ready we dismiss the branded native splash (capacitor.config.ts →
+      SplashScreen). Pure no-op in a normal browser (no Capacitor runtime), so the
+      identical file is safe on the live web deploy. Loaded last, after the page is
+      fully parsed, so "ready" genuinely means the app has painted.
+    -->
+    <script src="/splash.js"></script>
   </body>
 </html>
