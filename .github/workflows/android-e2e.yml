@@ -1,0 +1,237 @@
+# android-e2e.yml — Android emulator end-to-end smoke for the mobile shell (OSK-160).
+#
+# WHAT: boots a real Android EMULATOR in CI, installs the unsigned debug APK,
+#       launches the app, and drives a minimal signed-OUT flow against the live
+#       Capacitor WebView:
+#         app boots  ->  WebView loads the OpenSkeleton web UI (index.html)
+#                    ->  navigate to the sign-in page  ->  the signed-OUT
+#                        "Sign in" screen (#auth-signin) renders.
+#       One device screenshot is harvested PER milestone and published as
+#       INDIVIDUAL artifacts (plus one combined bundle), and the harvested count
+#       is verified. No real login is performed (see WHY below).
+#
+# WHY THIS IS SEPARATE FROM android.yml: android.yml is a fast COMPILE gate — it
+#       only proves `assembleDebug` still builds and never runs a device. This
+#       workflow is the slow INTEGRATION gate: it proves the built APK actually
+#       boots on Android and that the web app renders inside the native WebView.
+#       Emulator jobs are minutes-long and KVM-heavy, so they must stay OFF the
+#       fast PR path and off unrelated PRs — hence a dedicated workflow with its
+#       own narrow path-gate (below) rather than folding this into android.yml.
+#
+# WHY NO LOGIN IS NEEDED: LIVE Email/Password sign-in still needs a Firebase
+#       console toggle that is not switched on yet, so this flow deliberately
+#       covers only what renders WITHOUT authenticating. The signed-out sign-in
+#       form (web/app.html #auth-signin) renders purely from auth.js seeing
+#       `onAuthStateChanged(user=null)`; the console toggle only matters if the
+#       form is SUBMITTED, which this flow never does. So this is a valid,
+#       stable gate today and stays valid once live login is enabled.
+#
+# HOW THE FLOW IS DRIVEN: the debug APK is `android:debuggable`, and Capacitor 8
+#       enables WebView remote debugging for debuggable builds by default
+#       (CapConfig `webContentsDebuggingEnabled` defaults to `isDebug`;
+#       Bridge.java calls WebView.setWebContentsDebuggingEnabled). That exposes a
+#       Chrome DevTools endpoint on an abstract unix socket; we forward it to a
+#       TCP port and a tiny zero-dependency Node driver
+#       (scripts/mobile-e2e/drive-webview.mjs) speaks CDP to it to read the live
+#       DOM (real proof, not just a picture) and to navigate the WebView (the
+#       shell cold-boots to index.html and has no native address bar).
+#
+# PATH-GATE (why the triggers are what they are): unlike android.yml (which
+#       deliberately EXCLUDES web/** because a web change cannot break a compile),
+#       this integration gate INCLUDES web/**: the whole point is to catch a web
+#       change that breaks how the app renders inside the native WebView (e.g. the
+#       sign-in screen failing to appear). It also fires on the mobile scaffold
+#       (android/**, capacitor config, root manifests), on the driver script, and
+#       on this workflow itself. Slow, so it runs on PRs into main + post-merge on
+#       main + manual dispatch, never on unrelated PRs.
+#
+# SECURITY: every third-party action is pinned to a full commit SHA (never a
+#           moving tag) with the human-readable version in a trailing comment, so
+#           a re-pointed tag cannot inject code into CI. Default permissions are
+#           read-only. No secrets are used or needed — a debug build is unsigned
+#           and the flow performs no authenticated calls.
+
+name: Android E2E
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'web/**'
+      - 'scripts/mobile-e2e/**'
+      - '.github/workflows/android-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'web/**'
+      - 'scripts/mobile-e2e/**'
+      - '.github/workflows/android-e2e.yml'
+  # Manual trigger for on-demand runs (e.g. verifying a fix without touching a
+  # gated path).
+  workflow_dispatch:
+
+# Least-privilege: the job only reads the repo and uploads artifacts (which needs
+# no extra scope). No write access to repo contents.
+permissions:
+  contents: read
+
+# Supersede an in-progress run for the same ref when a newer commit lands, so slow
+# emulator runs don't pile up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator-e2e:
+    name: Emulator e2e (boot + WebView + sign-in screenshots)
+    runs-on: ubuntu-latest
+    # Generous ceiling: APK build + system-image download + emulator boot + the
+    # Firebase-SDK-gated sign-in render all add up on a cold runner.
+    timeout-minutes: 45
+
+    env:
+      # Where the driver + this workflow write the harvested per-step screenshots.
+      SCREENSHOT_DIR: mobile-e2e-artifacts/screenshots
+      # Local TCP port the WebView's forwarded DevTools socket is exposed on.
+      CDP_PORT: '9222'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # The emulator needs hardware acceleration; on ubuntu-latest that is KVM.
+      # Grant the runner user access to /dev/kvm so the emulator boots fast enough
+      # to stay inside timeout-minutes.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # JDK 21 — required by Capacitor 8 (capacitor-android is compiled with
+      # --release 21). Matches android.yml / ci.yml.
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Node 22 — the Capacitor 8 CLI needs >=22, and the CDP driver relies on the
+      # global WebSocket that is stable in Node 22. One toolchain for both.
+      - name: Set up Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Android cmdline-tools + platform-tools (adb). The emulator action installs
+      # the system image itself; this provides the SDK the APK build resolves
+      # against and the adb we drive the device with.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+
+      # Exactly the SDK components the generated project resolves against (matches
+      # android.yml: compileSdk/targetSdk 36, build-tools 35.0.0).
+      - name: Install required SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+
+      # Reproducible install of the Capacitor tooling from the committed lockfile.
+      - name: Install Capacitor tooling
+        run: npm ci
+
+      # Copy web/ into the native project + refresh native deps, so the emulator
+      # runs the exact current web app inside the shell.
+      - name: Capacitor sync (android)
+        run: npx cap sync android
+
+      # Build the unsigned debug APK we will install on the emulator. debuggable =>
+      # WebView remote debugging is enabled (see HOW THE FLOW IS DRIVEN above).
+      - name: Assemble debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # Boot the emulator and run the flow inside its `script`. The emulator is
+      # fully booted (adb-ready) before `script` runs.
+      #   - API 30 / x86_64 / google_apis: comfortably above the app's minSdk 24,
+      #     KVM-accelerated on x86_64, and ships a modern updatable WebView whose
+      #     DevTools protocol the CDP driver speaks.
+      #   - Headless + no snapshot + no boot-anim + swiftshader keeps it lean and
+      #     deterministic on a CI runner with no GPU.
+      - name: Run emulator e2e flow
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+        # Pass the harvest dir + CDP port through to the flow explicitly. These also
+        # come from the job-level `env:`, but restating them on the step makes the
+        # script's inputs self-evident and independent of job-wide env.
+        env:
+          SCREENSHOT_DIR: ${{ env.SCREENSHOT_DIR }}
+          CDP_PORT: ${{ env.CDP_PORT }}
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 2
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none
+          # android-emulator-runner does NOT run `script:` as one shell — it feeds it
+          # line-by-line, each under its own `/usr/bin/sh -c <line>`, so `set -eu`,
+          # `pipefail`, and shell-variable assignments do NOT persist across lines
+          # (this is what left `$APK` empty on earlier runs). So `script:` is a SINGLE
+          # line that hands the whole flow to ONE bash process: the committed
+          # scripts/mobile-e2e/emulator-flow.sh, which sets `set -euo pipefail` itself.
+          script: bash scripts/mobile-e2e/emulator-flow.sh
+
+      # ---- Publish evidence -----------------------------------------------------
+      # Each per-step screenshot is uploaded as its OWN named artifact (not one
+      # combined shot, not a single opaque zip) so every milestone is individually
+      # visible + downloadable from the run. A combined bundle is also published
+      # for convenience and to carry 99-failure.png on a red run. All uploads use
+      # `if: always()` so evidence survives even when the flow fails.
+      - name: Upload screenshot 01 (boot / splash)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        with:
+          name: screenshot-01-boot-splash
+          path: ${{ env.SCREENSHOT_DIR }}/01-boot-splash.png
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload screenshot 02 (WebView home UI)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        with:
+          name: screenshot-02-webview-home
+          path: ${{ env.SCREENSHOT_DIR }}/02-webview-home.png
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload screenshot 03 (signed-out sign-in screen)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        with:
+          name: screenshot-03-signin-signed-out
+          path: ${{ env.SCREENSHOT_DIR }}/03-signin-signed-out.png
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload all screenshots (combined bundle, incl. failure diagnostics)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        with:
+          name: mobile-e2e-screenshots
+          path: ${{ env.SCREENSHOT_DIR }}
+          if-no-files-found: warn
+          retention-days: 14
