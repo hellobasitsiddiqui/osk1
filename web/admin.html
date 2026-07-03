@@ -223,6 +223,27 @@
       .pager__label { color: var(--muted); font-size: 0.82rem; }
       .pager__size { margin-left: auto; padding: 0.4rem 0.5rem; }
 
+      /* --- Profile editor (OSK-85) ------------------------------------------ */
+      /* A second panel below the table, revealed by admin.js when an admin clicks a row's
+         "Edit profile". Reuses the shared .field / .btn styles; only the two-column grid,
+         the inline error list and the action row are new here. */
+      .row-edit { margin-left: 0.4rem; }
+      .profile-editor .pe-grid {
+        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem 1rem;
+      }
+      .profile-editor .field { margin-bottom: 0.5rem; }
+      .profile-editor select.field__input { -webkit-appearance: none; appearance: none; }
+      .pe-actions { display: flex; align-items: center; gap: 0.9rem; margin-top: 0.6rem; flex-wrap: wrap; }
+      .pe-save { width: auto; min-width: 10rem; }
+      .pe-status { margin: 0; }
+      .pe-errors {
+        margin: 0 0 0.9rem; padding: 0.55rem 0.8rem 0.55rem 1.6rem;
+        border: 1px solid var(--down); border-radius: 8px; color: var(--down);
+        font-size: 0.85rem; list-style: disc;
+      }
+      .pe-errors[hidden] { display: none; }
+      .pe-errors li { margin: 0.15rem 0; overflow-wrap: anywhere; }
+
       /* --- Footer (shared) --------------------------------------------------- */
       .foot {
         display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
@@ -259,6 +280,9 @@
         }
         .row-role { width: 100%; }
         .row-toggle { width: 100%; }
+        .row-edit { margin-left: 0; width: 100%; }
+        .profile-editor .pe-grid { grid-template-columns: 1fr; }
+        .pe-save { width: 100%; }
         .pager__size { margin-left: 0; width: 100%; }
         .foot a { display: inline-block; padding: 0.25rem 0; }
       }
@@ -503,6 +527,75 @@
               <option value="50">50 / page</option>
             </select>
           </div>
+        </div>
+
+        <!--
+          PROFILE EDITOR (OSK-85) — a second panel, hidden until an admin clicks a row's
+          "Edit profile". admin.js loads the user's full detail via GET .../{id}, fills the
+          form, and saves via PATCH .../{id}/profile. Validation errors from the backend are
+          rendered inline in #pe-errors; the fields mirror the OSK-67 profile set.
+        -->
+        <div class="panel profile-editor" id="profile-editor" hidden>
+          <div class="console__bar">
+            <h2 id="pe-heading">Edit profile</h2>
+            <button id="pe-cancel" class="btn btn--ghost" type="button">Close</button>
+          </div>
+          <p id="pe-subject" class="panel__hint"></p>
+
+          <form id="pe-form" novalidate>
+            <ul id="pe-errors" class="pe-errors" role="alert" hidden></ul>
+
+            <div class="pe-grid">
+              <label class="field">
+                <span class="field__label">Display name</span>
+                <input id="pe-displayName" class="field__input" type="text" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span class="field__label">First name</span>
+                <input id="pe-firstName" class="field__input" type="text" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span class="field__label">Last name</span>
+                <input id="pe-lastName" class="field__input" type="text" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span class="field__label">City</span>
+                <input id="pe-city" class="field__input" type="text" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span class="field__label">Age</span>
+                <input id="pe-age" class="field__input" type="number" inputmode="numeric"
+                       min="13" max="120" step="1" />
+              </label>
+              <label class="field">
+                <span class="field__label">Phone</span>
+                <input id="pe-phone" class="field__input" type="tel" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span class="field__label">Notification preference</span>
+                <select id="pe-notificationPreference" class="field__input">
+                  <option value="EMAIL">EMAIL</option>
+                  <option value="PUSH">PUSH</option>
+                  <option value="NONE">NONE</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="field__label">Timezone (IANA)</span>
+                <input id="pe-timezone" class="field__input" type="text" autocomplete="off"
+                       placeholder="Europe/London" />
+              </label>
+              <label class="field">
+                <span class="field__label">Locale (BCP-47)</span>
+                <input id="pe-locale" class="field__input" type="text" autocomplete="off"
+                       placeholder="en-GB" />
+              </label>
+            </div>
+
+            <div class="pe-actions">
+              <button id="pe-save" class="btn btn--primary pe-save" type="submit">Save profile</button>
+              <p id="pe-status" class="list-status pe-status" role="status" aria-live="polite" hidden></p>
+            </div>
+          </form>
         </div>
       </section>
 

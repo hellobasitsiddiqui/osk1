@@ -350,6 +350,11 @@ function oskCreateAdminApi(deps) {
     listUsers: function (opts) {
       return request("GET", "/api/v1/admin/users" + pageQuery(opts));
     },
+    // A single user's full detail incl. the OSK-67 profile fields (UserDetail in `data`).
+    // Used by the profile editor (OSK-85) to load fresh values before editing.
+    getUser: function (id) {
+      return request("GET", "/api/v1/admin/users/" + encodeURIComponent(id));
+    },
     // Change a user's role. Body shape is exactly the backend's UpdateRoleRequest.
     setRole: function (id, role) {
       return request("PATCH", "/api/v1/admin/users/" + encodeURIComponent(id) + "/role", { role: role });
@@ -358,7 +363,90 @@ function oskCreateAdminApi(deps) {
     setEnabled: function (id, enabled) {
       return request("PATCH", "/api/v1/admin/users/" + encodeURIComponent(id) + "/enabled", { enabled: enabled });
     },
+    // Sparse-edit a user's OSK-67 profile fields (OSK-85). Body is the backend's
+    // UpdateProfileRequest shape — only the fields present in `profile` are sent; a
+    // present field with an unchanged value is a server-side no-op. On a 400 the
+    // normalised result carries the RFC-7807 ProblemDetail (incl. `errors`) in `data`.
+    setProfile: function (id, profile) {
+      return request("PATCH", "/api/v1/admin/users/" + encodeURIComponent(id) + "/profile", profile || {});
+    },
   };
+}
+
+// ===========================================================================
+// PROFILE-EDIT HELPERS (OSK-85) — pure, so the edit form's payload-building and the
+// validation-error rendering are unit-simulated in Node with no DOM/browser.
+// ===========================================================================
+
+// The editable profile fields, in display order. Single source of truth shared by the
+// form-model projection and the payload builder so the two never drift.
+var OSK_PROFILE_FIELDS = [
+  "displayName", "firstName", "lastName", "city",
+  "age", "phone", "notificationPreference", "timezone", "locale",
+];
+
+// Project a UserDetail (from GET .../{id}) onto the STRING values the edit form's inputs
+// hold. Nulls degrade to "" (an empty input, not the text "null"); age is stringified;
+// notificationPreference falls back to the EMAIL default every user has. Pure.
+function oskProfileFormModel(user) {
+  var u = user || {};
+  function s(v) { return v == null ? "" : String(v); }
+  return {
+    id: u.id,
+    email: s(u.email),
+    displayName: s(u.displayName),
+    firstName: s(u.firstName),
+    lastName: s(u.lastName),
+    city: s(u.city),
+    age: u.age == null ? "" : String(u.age),
+    phone: s(u.phone),
+    notificationPreference: u.notificationPreference || "EMAIL",
+    timezone: s(u.timezone),
+    locale: s(u.locale),
+  };
+}
+
+// Build the SPARSE PATCH body from the form's raw input values. A field is INCLUDED only
+// when the admin left meaningful content in it: blank text fields are omitted (the
+// backend's sparse convention — omitted = "leave unchanged"; a value cannot be cleared to
+// null through this path, matching PATCH /me). `age` is coerced to a number when it parses
+// as an integer, else sent as the raw trimmed string so the backend returns a 400 the UI
+// can surface (rather than the client silently swallowing it). Pure: same input → same
+// object out, so the simulation asserts the exact wire body.
+function oskBuildProfileUpdate(input) {
+  var i = input || {};
+  var out = {};
+  OSK_PROFILE_FIELDS.forEach(function (field) {
+    var raw = i[field];
+    if (raw == null) { return; }
+    if (field === "age") {
+      var ageStr = String(raw).trim();
+      if (ageStr === "") { return; }
+      var n = Number(ageStr);
+      out.age = Number.isInteger(n) ? n : ageStr;
+      return;
+    }
+    var val = String(raw).trim();
+    if (val === "") { return; } // blank → omit (sparse: leave unchanged)
+    out[field] = val;
+  });
+  return out;
+}
+
+// Extract the human-readable validation messages to render inline after a failed save.
+// The backend's 400 body is an RFC-7807 ProblemDetail whose `errors` array holds
+// "field: message" strings (see GlobalExceptionHandler); fall back to `detail`/`title`,
+// then a status/generic line, so the UI ALWAYS has something to show. Pure; never throws.
+function oskProfileErrors(res) {
+  var r = res || {};
+  var data = r.data;
+  if (data && Array.isArray(data.errors) && data.errors.length) {
+    return data.errors.map(String);
+  }
+  if (data && typeof data.detail === "string" && data.detail) { return [data.detail]; }
+  if (data && typeof data.title === "string" && data.title) { return [data.title]; }
+  if (r.status) { return ["Request failed (HTTP " + r.status + ")."]; }
+  return ["Couldn't save the profile. Please try again."];
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +466,11 @@ if (typeof module !== "undefined" && module.exports) {
     dash: oskDash,
     formatInstant: oskFormatInstant,
     createAdminApi: oskCreateAdminApi,
+    // OSK-85 profile-edit helpers.
+    profileFields: OSK_PROFILE_FIELDS,
+    profileFormModel: oskProfileFormModel,
+    buildProfileUpdate: oskBuildProfileUpdate,
+    profileErrors: oskProfileErrors,
   };
 }
 
@@ -466,6 +559,30 @@ if (typeof window !== "undefined") {
     var signinSubmit = document.getElementById("signin-submit");
     var googleBtn = document.getElementById("google-btn");
     var signinError = document.getElementById("signin-error");
+
+    // Profile editor handles (OSK-85). The panel + its inputs are declared in admin.html
+    // and start hidden; they are only ever populated/shown for an admin editing a user.
+    var editorEl = document.getElementById("profile-editor");
+    var editorForm = document.getElementById("pe-form");
+    var editorSubject = document.getElementById("pe-subject");
+    var editorErrors = document.getElementById("pe-errors");
+    var editorStatus = document.getElementById("pe-status");
+    var editorSave = document.getElementById("pe-save");
+    var editorCancel = document.getElementById("pe-cancel");
+    // The nine editable inputs, keyed by field name (mirrors OSK_PROFILE_FIELDS).
+    var editorInputs = {
+      displayName: document.getElementById("pe-displayName"),
+      firstName: document.getElementById("pe-firstName"),
+      lastName: document.getElementById("pe-lastName"),
+      city: document.getElementById("pe-city"),
+      age: document.getElementById("pe-age"),
+      phone: document.getElementById("pe-phone"),
+      notificationPreference: document.getElementById("pe-notificationPreference"),
+      timezone: document.getElementById("pe-timezone"),
+      locale: document.getElementById("pe-locale"),
+    };
+    // Which user the editor is currently editing (id), and whether a save is in flight.
+    var editor = { id: null, saving: false };
 
     // ---- Small DOM helpers (all XSS-safe: textContent / createElement only) ----
 
@@ -593,6 +710,144 @@ if (typeof window !== "undefined") {
       });
     }
 
+    // ---- Profile editor (OSK-85: view + edit another user's profile) ------
+
+    // Show a list of validation/error strings in the editor's error region (or hide it
+    // when there are none). XSS-safe: each message is a text node in its own <li>.
+    function renderEditorErrors(messages) {
+      if (!editorErrors) { return; }
+      clearChildren(editorErrors);
+      if (!messages || !messages.length) {
+        editorErrors.hidden = true;
+        return;
+      }
+      for (var i = 0; i < messages.length; i++) {
+        var li = document.createElement("li");
+        li.textContent = messages[i];
+        editorErrors.appendChild(li);
+      }
+      editorErrors.hidden = false;
+    }
+
+    function setEditorStatus(message) {
+      if (!editorStatus) { return; }
+      editorStatus.textContent = message || "";
+      editorStatus.hidden = !message;
+    }
+
+    // Populate the editor form from a UserDetail-ish object and reveal the panel.
+    function fillEditorForm(detail) {
+      var model = oskProfileFormModel(detail);
+      Object.keys(editorInputs).forEach(function (field) {
+        var el = editorInputs[field];
+        if (el) { el.value = model[field] != null ? model[field] : ""; }
+      });
+      if (editorSubject) {
+        editorSubject.textContent = "Editing " + oskDash(detail && detail.email);
+      }
+    }
+
+    // Open the editor for a user: fetch their FRESH detail (so the form reflects the
+    // persisted truth, incl. fields not shown in the list) then populate + show the panel.
+    function openProfileEditor(user) {
+      if (!user || user.id == null) { return; }
+      editor.id = user.id;
+      editor.saving = false;
+      renderEditorErrors(null);
+      setEditorStatus("Loading…");
+      if (editorEl) { editorEl.hidden = false; }
+      // Pre-fill from the row we already have so the form isn't blank while loading.
+      fillEditorForm(user);
+      if (editorEl && typeof editorEl.scrollIntoView === "function") {
+        editorEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      api.getUser(user.id).then(function (res) {
+        // Ignore a stale load if the admin opened a different row meanwhile / closed it.
+        if (editor.id !== user.id) { return; }
+        if (res.ok && res.data && res.data.id != null) {
+          fillEditorForm(res.data);
+          setEditorStatus("");
+          return;
+        }
+        if (res.error === "unauthorized" || res.error === "no-token") {
+          closeProfileEditor();
+          access.meStatus = "unauthorized";
+          render();
+          return;
+        }
+        // Couldn't refresh — keep the row's values (already filled) and note it.
+        setEditorStatus("Couldn't load the latest details; editing the values shown.");
+      });
+    }
+
+    function closeProfileEditor() {
+      editor.id = null;
+      editor.saving = false;
+      renderEditorErrors(null);
+      setEditorStatus("");
+      if (editorEl) { editorEl.hidden = true; }
+    }
+
+    // Save the edited profile: build the sparse body from the inputs and PATCH it. On
+    // success reconcile the list row (the returned UserDetail is a superset of the summary)
+    // and close; on a 400 render the field errors inline; on 401/403 re-gate.
+    function saveProfile() {
+      if (editor.id == null || editor.saving) { return; }
+      var raw = {};
+      Object.keys(editorInputs).forEach(function (field) {
+        var el = editorInputs[field];
+        raw[field] = el ? el.value : "";
+      });
+      var payload = oskBuildProfileUpdate(raw);
+      var targetId = editor.id;
+
+      editor.saving = true;
+      if (editorSave) { editorSave.disabled = true; }
+      renderEditorErrors(null);
+      setEditorStatus("Saving…");
+
+      api.setProfile(targetId, payload).then(function (res) {
+        editor.saving = false;
+        if (editorSave) { editorSave.disabled = false; }
+        // A later open/close may have moved on; ignore a stale save result.
+        if (editor.id !== targetId) { return; }
+
+        if (res.ok && res.data && res.data.id != null) {
+          // Reflect the update in the list (display name etc. may have changed).
+          for (var i = 0; i < list.items.length; i++) {
+            if (list.items[i] && list.items[i].id === res.data.id) {
+              list.items[i] = res.data;
+              break;
+            }
+          }
+          renderConsole();
+          setEditorStatus("Saved.");
+          closeProfileEditor();
+          return;
+        }
+        if (res.error === "unauthorized" || res.error === "no-token") {
+          closeProfileEditor();
+          access.meStatus = "unauthorized";
+          render();
+          return;
+        }
+        if (res.error === "forbidden") {
+          renderEditorErrors(["That action was refused (403) — re-checking your access…"]);
+          setEditorStatus("");
+          verifyAdmin();
+          return;
+        }
+        if (res.error === "not-found") {
+          renderEditorErrors(["That user no longer exists (404)."]);
+          setEditorStatus("");
+          return;
+        }
+        // 400 (validation) or any other non-2xx: show the extracted messages inline.
+        renderEditorErrors(oskProfileErrors(res));
+        setEditorStatus("");
+      });
+    }
+
     // ---- Rendering --------------------------------------------------------
 
     // Build one <tr> for a user, wiring its role <select> and enable/disable button.
@@ -665,6 +920,19 @@ if (typeof window !== "undefined") {
         });
       }
       actionsTd.appendChild(toggleBtn);
+
+      // Edit-profile affordance (OSK-85). Unlike role/disable this is safe on your OWN row
+      // (editing profile fields can't lock you out), so it is never disabled for self.
+      var editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "btn btn--ghost row-edit";
+      editBtn.textContent = "Edit profile";
+      editBtn.setAttribute("aria-label", "Edit profile for " + m.email);
+      editBtn.addEventListener("click", function () {
+        openProfileEditor(user);
+      });
+      actionsTd.appendChild(editBtn);
+
       tr.appendChild(actionsTd);
 
       return tr;
@@ -773,6 +1041,7 @@ if (typeof window !== "undefined") {
           list.totalElements = 0;
           list.totalPages = 0;
           setListError("");
+          closeProfileEditor(); // tear down any open edit form on sign-out
           render();
         }
       } else {
@@ -823,6 +1092,23 @@ if (typeof window !== "undefined") {
     }
     if (refreshBtn) {
       refreshBtn.addEventListener("click", function () { loadPage(list.page); });
+    }
+
+    // Profile editor save/cancel (OSK-85). Submitting the form saves; cancel just closes.
+    if (editorForm) {
+      editorForm.addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        saveProfile();
+      });
+    }
+    if (editorSave) {
+      editorSave.addEventListener("click", function (ev) {
+        // The button is type=submit inside the form, but guard in case markup changes.
+        if (!editorForm) { ev.preventDefault(); saveProfile(); }
+      });
+    }
+    if (editorCancel) {
+      editorCancel.addEventListener("click", function () { closeProfileEditor(); });
     }
 
     // Sign-in affordance (signed-out state) — same shape as app.html's OSK-74 form.

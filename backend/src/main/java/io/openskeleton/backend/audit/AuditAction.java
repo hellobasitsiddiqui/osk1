@@ -25,6 +25,15 @@ public enum AuditAction {
     /** A user's mutable profile fields (email, display name, ...) were changed. */
     PROFILE_UPDATED,
 
+    /**
+     * An admin edited ANOTHER user's profile fields on their behalf (OSK-85). Distinct from
+     * {@link #PROFILE_UPDATED} — which is a user editing their OWN profile via
+     * {@code PATCH /api/v1/me} — so the two are separable in the audit log: here the actor is
+     * the acting admin's uid and the target is the edited user's id, with the changed fields
+     * (each {@code {old, new}}) carried in the event metadata.
+     */
+    PROFILE_EDITED,
+
     /** A user's authorization role was changed (e.g. USER → ADMIN). */
     ROLE_CHANGED,
 

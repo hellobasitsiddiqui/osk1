@@ -363,6 +363,60 @@
         "required" : [ "role" ],
         "type" : "object"
       },
+      "UserDetail" : {
+        "properties" : {
+          "accountType" : {
+            "type" : "string"
+          },
+          "age" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "city" : {
+            "type" : "string"
+          },
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "displayName" : {
+            "type" : "string"
+          },
+          "email" : {
+            "type" : "string"
+          },
+          "enabled" : {
+            "type" : "boolean"
+          },
+          "firstName" : {
+            "type" : "string"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "lastName" : {
+            "type" : "string"
+          },
+          "locale" : {
+            "type" : "string"
+          },
+          "notificationPreference" : {
+            "enum" : [ "EMAIL", "PUSH", "NONE" ],
+            "type" : "string"
+          },
+          "phone" : {
+            "type" : "string"
+          },
+          "role" : {
+            "type" : "string"
+          },
+          "timezone" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "UserSummary" : {
         "properties" : {
           "accountType" : {
@@ -432,7 +486,7 @@
           "name" : "action",
           "required" : false,
           "schema" : {
-            "enum" : [ "USER_PROVISIONED", "PROFILE_UPDATED", "ROLE_CHANGED", "ACCOUNT_ENABLED", "ACCOUNT_DISABLED" ],
+            "enum" : [ "USER_PROVISIONED", "PROFILE_UPDATED", "PROFILE_EDITED", "ROLE_CHANGED", "ACCOUNT_ENABLED", "ACCOUNT_DISABLED" ],
             "type" : "string"
           }
         }, {
@@ -501,7 +555,7 @@
             "content" : {
               "*/*" : {
                 "schema" : {
-                  "$ref" : "#/components/schemas/UserSummary"
+                  "$ref" : "#/components/schemas/UserDetail"
                 }
               }
             },
@@ -539,6 +593,43 @@
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/UserSummary"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "admin-user-controller" ]
+      }
+    },
+    "/api/v1/admin/users/{id}/profile" : {
+      "patch" : {
+        "operationId" : "updateProfile",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "format" : "uuid",
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/UserDetail"
                 }
               }
             },

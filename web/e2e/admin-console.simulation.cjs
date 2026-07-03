@@ -397,6 +397,125 @@ console.log("\ncreateAdminApi() — a network failure is caught, never thrown:")
 }
 
 // ---------------------------------------------------------------------------
+// 8) OSK-85 — view + edit another user's profile.
+//    a) getUser + setProfile build the right requests (method, URL, Bearer, JSON body),
+//    b) buildProfileUpdate turns raw form input into the SPARSE wire body,
+//    c) profileFormModel projects a UserDetail onto the form's string values,
+//    d) profileErrors extracts the backend 400 validation messages for inline render.
+// ---------------------------------------------------------------------------
+const USER_DETAIL = {
+  id: "42", email: "dana@example.com", displayName: "Dana Dev", role: "USER",
+  enabled: true, accountType: "REAL", createdAt: "2026-04-04T08:00:00Z",
+  firstName: "Dana", lastName: "Dev", city: "Berlin", age: 31, phone: "+49123",
+  notificationPreference: "PUSH", timezone: "Europe/Berlin", locale: "de-DE",
+};
+
+console.log("\ncreateAdminApi() — getUser builds GET /api/v1/admin/users/{id} with a Bearer token:");
+{
+  const fetchImpl = makeFetch(res(200, USER_DETAIL));
+  const api = admin.createAdminApi({
+    baseUrl: "https://api.example.com",
+    getToken: function () { return Promise.resolve("TESTTOKEN"); },
+    fetchImpl: fetchImpl,
+  });
+  api.getUser("42").then(function (r) {
+    const c = fetchImpl.calls[0];
+    assertEqual("method GET", c.init.method, "GET");
+    assertEqual("URL targets the single-user detail", c.url, "https://api.example.com/api/v1/admin/users/42");
+    assertEqual("Authorization Bearer", c.init.headers.Authorization, "Bearer TESTTOKEN");
+    assertEqual("no body on GET", c.init.body, undefined);
+    assertEqual("detail carries the profile fields", r.data.city, "Berlin");
+    assertEqual("detail carries the notification pref", r.data.notificationPreference, "PUSH");
+  });
+}
+
+console.log("\ncreateAdminApi() — setProfile builds a PATCH .../{id}/profile with the sparse JSON body:");
+{
+  const updated = Object.assign({}, USER_DETAIL, { city: "Munich" });
+  const fetchImpl = makeFetch(res(200, updated));
+  const api = admin.createAdminApi({
+    baseUrl: "https://api.example.com",
+    getToken: function () { return Promise.resolve("TESTTOKEN"); },
+    fetchImpl: fetchImpl,
+  });
+  const bodyObj = { city: "Munich", age: 32 };
+  api.setProfile("42", bodyObj).then(function (r) {
+    const c = fetchImpl.calls[0];
+    assertEqual("method PATCH", c.init.method, "PATCH");
+    assertEqual("URL targets the profile sub-resource", c.url, "https://api.example.com/api/v1/admin/users/42/profile");
+    assertEqual("Content-Type json", c.init.headers["Content-Type"], "application/json");
+    assertEqual("Authorization Bearer", c.init.headers.Authorization, "Bearer TESTTOKEN");
+    assertEqual("body is exactly the profile object", c.init.body, JSON.stringify(bodyObj));
+    assertEqual("returns the updated detail", r.data.city, "Munich");
+  });
+}
+
+console.log("\ncreateAdminApi() — setProfile 404 (unknown user) is normalised to 'not-found':");
+{
+  const fetchImpl = makeFetch(res(404, { title: "Not Found", status: 404 }));
+  const api = admin.createAdminApi({ baseUrl: "", getToken: function () { return Promise.resolve("T"); }, fetchImpl: fetchImpl });
+  api.setProfile("nope", { city: "X" }).then(function (r) {
+    assertEqual("ok false", r.ok, false);
+    assertEqual("status 404", r.status, 404);
+    assertEqual("error token", r.error, "not-found");
+  });
+}
+
+console.log("\nbuildProfileUpdate() — omits blanks, trims text, and coerces a valid age to a number:");
+{
+  const body = admin.buildProfileUpdate({
+    displayName: "  Dana D.  ", firstName: "", lastName: "Dev",
+    city: "  Munich ", age: "32", phone: "  ", notificationPreference: "PUSH",
+    timezone: "Europe/Berlin", locale: "",
+  });
+  assertEqual("displayName trimmed", body.displayName, "Dana D.");
+  assertEqual("blank firstName omitted", "firstName" in body, false);
+  assertEqual("lastName kept", body.lastName, "Dev");
+  assertEqual("city trimmed", body.city, "Munich");
+  assertEqual("age coerced to a number", body.age, 32);
+  assert("age is a number type", typeof body.age === "number");
+  assertEqual("whitespace-only phone omitted", "phone" in body, false);
+  assertEqual("notificationPreference kept", body.notificationPreference, "PUSH");
+  assertEqual("timezone kept", body.timezone, "Europe/Berlin");
+  assertEqual("empty locale omitted", "locale" in body, false);
+}
+
+console.log("\nbuildProfileUpdate() — a non-integer age is sent raw so the backend can 400 it:");
+{
+  const body = admin.buildProfileUpdate({ age: "not-a-number" });
+  assertEqual("age passed through as the raw string", body.age, "not-a-number");
+}
+
+console.log("\nprofileFormModel() — projects a UserDetail onto form string values (nulls => \"\"):");
+{
+  const m = admin.profileFormModel(Object.assign({}, USER_DETAIL, { city: null, age: null, timezone: null }));
+  assertEqual("displayName", m.displayName, "Dana Dev");
+  assertEqual("null city => empty string", m.city, "");
+  assertEqual("null age => empty string", m.age, "");
+  assertEqual("age otherwise stringified", admin.profileFormModel(USER_DETAIL).age, "31");
+  assertEqual("null notificationPreference falls back to EMAIL", admin.profileFormModel({}).notificationPreference, "EMAIL");
+  assertEqual("null timezone => empty string", m.timezone, "");
+}
+
+console.log("\nprofileErrors() — extracts the backend 400 validation messages for inline render:");
+{
+  // The exact ProblemDetail shape GlobalExceptionHandler emits: errors are "field: message".
+  const problem = { title: "Bad Request", status: 400, errors: ["age: must be at most 120", "timezone: must be a valid IANA time zone (e.g. Europe/London)"] };
+  const msgs = admin.profileErrors({ ok: false, status: 400, data: problem, error: "http-400" });
+  assertEqual("two messages extracted", msgs.length, 2);
+  assert("first mentions age", /age/.test(msgs[0]));
+  assert("second mentions timezone", /timezone/.test(msgs[1]));
+}
+
+console.log("\nprofileErrors() — falls back to detail/title/status when there is no errors array:");
+{
+  assertEqual("uses detail", admin.profileErrors({ ok: false, status: 400, data: { detail: "Malformed request." } })[0], "Malformed request.");
+  assertEqual("uses title", admin.profileErrors({ ok: false, status: 400, data: { title: "Bad Request" } })[0], "Bad Request");
+  assert("uses status", /HTTP 500/.test(admin.profileErrors({ ok: false, status: 500, data: null })[0]));
+  assert("generic when nothing", admin.profileErrors({}).length === 1);
+}
+
+// ---------------------------------------------------------------------------
 // Summary + exit code. The async assertions above resolve on the microtask queue;
 // process.on("exit") runs after they settle, so the tally is complete here.
 // ---------------------------------------------------------------------------

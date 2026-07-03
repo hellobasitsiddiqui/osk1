@@ -2,6 +2,8 @@ package io.openskeleton.backend.admin;
 
 import io.openskeleton.backend.audit.AuditAction;
 import io.openskeleton.backend.audit.AuditService;
+import io.openskeleton.backend.user.ProfileChange;
+import io.openskeleton.backend.user.ProfileUpdate;
 import io.openskeleton.backend.user.User;
 import io.openskeleton.backend.user.User.Role;
 import io.openskeleton.backend.user.UserRepository;
@@ -10,6 +12,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -182,6 +186,112 @@ public class AdminUserService {
                 TARGET_TYPE_USER,
                 id.toString());
         return saved;
+    }
+
+    /**
+     * Edit ANOTHER user's self-service profile fields (OSK-85) — the admin-facing counterpart
+     * to a user editing their own profile via {@code PATCH /api/v1/me} (OSK-67). An admin may
+     * change any user's {@code displayName} plus the richer profile fields (first/last name,
+     * city, age, phone, notification preference, timezone, locale); the identity/authorization
+     * fields ({@code firebaseUid}, {@code email}, {@code role}, {@code enabled},
+     * {@code accountType}) are intentionally NOT touched here — role/enabled have their own
+     * dedicated endpoints, and identity comes from the verified token, never a body.
+     *
+     * <p><b>Sparse (partial) update.</b> The {@link ProfileUpdate} carries one component per
+     * editable field; a {@code null} component means "leave this field unchanged" and a
+     * non-null one is the requested value (already validated at the API boundary). A field is
+     * written only when the requested value genuinely differs from the current one
+     * ({@link Objects#equals} guard), so an idempotent edit that resubmits the current values is
+     * a <b>no-op</b> — no UPDATE and no audit event — exactly like {@code UserService.updateProfile}.
+     *
+     * <p><b>Concurrency.</b> Runs in a single transaction so the load-mutate-save is atomic and
+     * carries the {@code @Version} optimistic-lock check inherited from {@code BaseEntity}: a
+     * concurrent stale write is rejected (409) rather than silently overwritten.
+     *
+     * <p><b>Audit (OSK-85).</b> When at least one field genuinely changes, a SINGLE
+     * {@link AuditAction#PROFILE_EDITED} event is appended through {@link AuditService#record} in
+     * the SAME transaction (so the profile write and its audit row commit atomically). Unlike
+     * the self-service {@code PROFILE_UPDATED} history — one event per field, actor == the user
+     * themselves — this records the acting <i>admin</i> as the actor, the edited user's id as the
+     * target, and ALL changed fields in one metadata map ({@code {field: {old, new}, ...}}), so
+     * "which admin changed what on whom" is a single row. The changed-field names reuse the
+     * {@link ProfileChange} field vocabulary so the admin edit and the self-edit name fields
+     * identically.
+     *
+     * @param id               the target user's id
+     * @param update           the requested field changes (null components left unchanged)
+     * @param actorFirebaseUid the acting admin's Firebase uid, recorded as the audit actor
+     *     (may be {@code null} only for a system-originated call; normal admin calls always
+     *     carry the verified-token uid)
+     * @return the updated, persisted user (or the unchanged user when nothing changed)
+     * @throws NotFoundException if no active user has that id (404)
+     */
+    @Transactional
+    public User editProfile(UUID id, ProfileUpdate update, String actorFirebaseUid) {
+        User user = userRepository.findById(id).orElseThrow(() -> new NotFoundException("No user with id " + id));
+
+        // Apply each requested change (if genuinely different), collecting a {field: {old, new}}
+        // map so a single PROFILE_EDITED event captures the whole admin edit. One helper
+        // centralises the null-skip + changed-vs-unchanged logic so every field behaves alike.
+        Map<String, Object> changed = new LinkedHashMap<>();
+        applyIfChanged(
+                changed,
+                ProfileChange.FIELD_DISPLAY_NAME,
+                update.displayName(),
+                user::getDisplayName,
+                user::setDisplayName);
+        applyIfChanged(
+                changed, ProfileChange.FIELD_FIRST_NAME, update.firstName(), user::getFirstName, user::setFirstName);
+        applyIfChanged(changed, ProfileChange.FIELD_LAST_NAME, update.lastName(), user::getLastName, user::setLastName);
+        applyIfChanged(changed, ProfileChange.FIELD_CITY, update.city(), user::getCity, user::setCity);
+        applyIfChanged(changed, ProfileChange.FIELD_AGE, update.age(), user::getAge, user::setAge);
+        applyIfChanged(changed, ProfileChange.FIELD_PHONE, update.phone(), user::getPhone, user::setPhone);
+        applyIfChanged(
+                changed,
+                ProfileChange.FIELD_NOTIFICATION_PREFERENCE,
+                update.notificationPreference(),
+                user::getNotificationPreference,
+                user::setNotificationPreference);
+        applyIfChanged(changed, ProfileChange.FIELD_TIMEZONE, update.timezone(), user::getTimezone, user::setTimezone);
+        applyIfChanged(changed, ProfileChange.FIELD_LOCALE, update.locale(), user::getLocale, user::setLocale);
+
+        // Nothing genuinely changed → no write and no audit (idempotent edit is a no-op).
+        if (changed.isEmpty()) {
+            return user;
+        }
+
+        User saved = userRepository.save(user);
+        auditService.record(actorFirebaseUid, AuditAction.PROFILE_EDITED, TARGET_TYPE_USER, id.toString(), changed);
+        return saved;
+    }
+
+    /**
+     * Apply one requested field change to {@code user} when it is both present and genuinely
+     * different, recording the before/after under {@code field} in {@code changed} for the
+     * single PROFILE_EDITED metadata. A {@code null} {@code requested} is the sparse "leave
+     * unchanged" signal, and an {@link Objects#equals} match short-circuits a redundant change —
+     * so neither writes. The {@code {old, new}} sub-map mirrors the {@code {old, new}} shape the
+     * role-change metadata already uses.
+     */
+    private static <T> void applyIfChanged(
+            Map<String, Object> changed, String field, T requested, Supplier<T> current, Consumer<T> setter) {
+        if (requested == null) {
+            return; // caller did not ask to change this field (sparse) — leave it.
+        }
+        T old = current.get();
+        if (Objects.equals(old, requested)) {
+            return; // already the requested value — no genuine change, so no write/audit.
+        }
+        setter.accept(requested);
+        Map<String, Object> delta = new LinkedHashMap<>();
+        delta.put(META_OLD, asString(old));
+        delta.put(META_NEW, asString(requested));
+        changed.put(field, delta);
+    }
+
+    /** Null-safe stringification for audit metadata — a null value stays null, not "null". */
+    private static String asString(Object value) {
+        return value == null ? null : value.toString();
     }
 
     /**
