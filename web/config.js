@@ -34,4 +34,33 @@ window.__APP_CONFIG__ = {
   // ${GITHUB_SHA} at deploy time via the SAME node-rewrite seam as apiBaseUrl —
   // never hardcoded, so a fresh replay project shows the correct value.
   buildSha: "dev",
+
+  // OSK-151: site-wide alert banner (web MVP, config-driven). Every web page reads
+  // this at runtime and renders a dismissible, full-width banner across the top
+  // WHEN `active` is true AND — if a time window is set — the current time is
+  // within [startsAt, endsAt]. Default INACTIVE, so nothing shows anywhere until an
+  // operator fills this in. Editing `message` re-shows the banner even for users who
+  // dismissed a previous one (dismissal is keyed by a hash of the message text).
+  //
+  //   active   — master on/off switch. false = no banner on any page.
+  //   severity — "info" | "warning" | "critical"; drives the banner's accent colour
+  //              (info = brand accent, warning = amber, critical = red). Anything
+  //              else falls back to "info".
+  //   message  — the text shown to users. Rendered with textContent only, so it is
+  //              XSS-safe (any HTML in here is shown as literal text, never parsed).
+  //   startsAt — ISO 8601 instant the banner should start showing, or null for
+  //              "no start bound" (show immediately once active).
+  //   endsAt   — ISO 8601 instant the banner should stop showing, or null for
+  //              "no end bound" (show until dismissed / active flipped off).
+  //
+  // FOLLOW-UP (see the PR body): the alert is a committed config value today. A later
+  // ticket sources it from the backend/admin — e.g. GET /api/v1/alerts or an
+  // admin-set value — so ops can publish/clear an advisory without a redeploy.
+  alert: {
+    active: false,
+    severity: "info",
+    message: "",
+    startsAt: null,
+    endsAt: null,
+  },
 };
