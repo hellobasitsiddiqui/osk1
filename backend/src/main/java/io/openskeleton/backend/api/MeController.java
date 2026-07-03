@@ -1,5 +1,7 @@
 package io.openskeleton.backend.api;
 
+import io.openskeleton.backend.account.FirebaseAccountService;
+import io.openskeleton.backend.account.FirebaseAccountState;
 import io.openskeleton.backend.audit.AuditEvent;
 import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.auth.FirebaseAuthenticationFilter;
@@ -60,10 +62,13 @@ public class MeController {
 
     private final UserService userService;
     private final AuditService auditService;
+    private final FirebaseAccountService firebaseAccountService;
 
-    public MeController(UserService userService, AuditService auditService) {
+    public MeController(
+            UserService userService, AuditService auditService, FirebaseAccountService firebaseAccountService) {
         this.userService = userService;
         this.auditService = auditService;
+        this.firebaseAccountService = firebaseAccountService;
     }
 
     /**
@@ -90,6 +95,21 @@ public class MeController {
      * @param termsAcceptedVersion the terms version the caller accepted, or {@code null} if none yet
      * @param termsAcceptedAt when the caller accepted terms (server timestamp), or {@code null} if none yet
      * @param ageVerified whether the caller's age has been verified (never {@code null}; defaults false)
+     * @param emailVerified whether Firebase considers the caller's email verified (OSK-73), or
+     *     {@code null} if Firebase is unavailable — READ-ONLY, owned by Firebase, not persisted here
+     * @param mfaEnabled whether the caller has any enrolled MFA second factors (OSK-73). Currently
+     *     always {@code null}: firebase-admin 9.9.0 exposes no MFA accessor, so it cannot be read —
+     *     the field is in the contract so it lights up on a future SDK/version bump
+     * @param phoneVerified whether the caller has a verified phone on Firebase (OSK-73; derived from
+     *     a phone number being present), or {@code null} if unavailable — READ-ONLY, Firebase-owned
+     * @param phoneNumber the caller's verified E.164 phone from Firebase (OSK-73), or {@code null} —
+     *     READ-ONLY, Firebase-owned; distinct from the self-service {@code phone} profile field above
+     * @param photoUrl the caller's Firebase profile photo URL (OSK-73), or {@code null} — READ-ONLY,
+     *     Firebase-owned
+     * @param lastLoginAt when Firebase last saw the caller sign in (OSK-73), or {@code null} — advances
+     *     only on a fresh Firebase sign-in
+     * @param lastActiveAt when the backend last saw the caller make an authenticated request (OSK-73;
+     *     this app's own throttled heartbeat), or {@code null} until the first stamp
      */
     public record CurrentUser(
             String uid,
@@ -107,7 +127,14 @@ public class MeController {
             boolean onboardingCompleted,
             String termsAcceptedVersion,
             Instant termsAcceptedAt,
-            boolean ageVerified) {}
+            boolean ageVerified,
+            Boolean emailVerified,
+            Boolean mfaEnabled,
+            Boolean phoneVerified,
+            String phoneNumber,
+            String photoUrl,
+            Instant lastLoginAt,
+            Instant lastActiveAt) {}
 
     /**
      * Request body for {@code PATCH /api/v1/me}: the fields a caller may change on their own
@@ -201,7 +228,10 @@ public class MeController {
         String uid = (String) request.getAttribute(FirebaseAuthenticationFilter.UID_ATTRIBUTE);
         String email = (String) request.getAttribute(FirebaseAuthenticationFilter.EMAIL_ATTRIBUTE);
         User user = userService.provisionFromToken(uid, email);
-        return toCurrentUser(user);
+        // Firebase-owned, read-only account state (OSK-73), fetched live from the Admin SDK; degrades
+        // to all-null when Firebase is unavailable so /me never fails on a missing dependency.
+        FirebaseAccountState accountState = firebaseAccountService.stateFor(uid);
+        return toCurrentUser(user, accountState);
     }
 
     /**
@@ -221,7 +251,9 @@ public class MeController {
         // only); then apply the client-supplied field changes (sparse — see ProfileUpdate).
         userService.provisionFromToken(uid, email);
         User updated = userService.updateProfile(uid, body.toProfileUpdate());
-        return toCurrentUser(updated);
+        // Mirror GET /me: return the same shape including the live Firebase-owned account state.
+        FirebaseAccountState accountState = firebaseAccountService.stateFor(uid);
+        return toCurrentUser(updated, accountState);
     }
 
     /**
@@ -244,7 +276,9 @@ public class MeController {
         String email = (String) request.getAttribute(FirebaseAuthenticationFilter.EMAIL_ATTRIBUTE);
         userService.provisionFromToken(uid, email);
         User updated = userService.updateLifecycle(uid, body.toLifecycleUpdate());
-        return toCurrentUser(updated);
+        // Mirror GET /me: return the same shape including the live Firebase-owned account state.
+        FirebaseAccountState accountState = firebaseAccountService.stateFor(uid);
+        return toCurrentUser(updated, accountState);
     }
 
     /**
@@ -279,8 +313,13 @@ public class MeController {
         return PagedResponse.of(events.map(ProfileChange::from));
     }
 
-    /** Map the persisted entity to the wire shape (role rendered as its enum name). */
-    private static CurrentUser toCurrentUser(User user) {
+    /**
+     * Map the persisted entity plus the live Firebase-owned account state to the wire shape (role
+     * rendered as its enum name). The persisted profile supplies identity + the self-service fields
+     * and {@code lastActiveAt}; {@code accountState} supplies the read-only Firebase-owned fields,
+     * which are all {@code null} when Firebase is unavailable (OSK-73).
+     */
+    private static CurrentUser toCurrentUser(User user, FirebaseAccountState accountState) {
         return new CurrentUser(
                 user.getFirebaseUid(),
                 user.getEmail(),
@@ -297,6 +336,13 @@ public class MeController {
                 user.isOnboardingCompleted(),
                 user.getTermsAcceptedVersion(),
                 user.getTermsAcceptedAt(),
-                user.isAgeVerified());
+                user.isAgeVerified(),
+                accountState.emailVerified(),
+                accountState.mfaEnabled(),
+                accountState.phoneVerified(),
+                accountState.phoneNumber(),
+                accountState.photoUrl(),
+                accountState.lastLoginAt(),
+                user.getLastActiveAt());
     }
 }

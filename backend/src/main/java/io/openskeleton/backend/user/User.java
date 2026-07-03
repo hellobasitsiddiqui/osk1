@@ -194,6 +194,18 @@ public class User extends BaseEntity {
     @Column(name = "age_verified", nullable = false)
     private boolean ageVerified = false;
 
+    /**
+     * The backend's own "last seen active" heartbeat (OSK-73), stamped (throttled) on every
+     * authenticated {@code /api/v1/**} request by {@link LastActiveService}. NULLABLE: a freshly
+     * JIT-provisioned user (OSK-76) and every pre-V9 row start {@code null} ("not yet observed
+     * active") until the first stamp lands. Distinct from Firebase's {@code lastLoginAt} (which
+     * only advances on a fresh sign-in) — this tracks activity, not authentication. Pairs with the
+     * {@code last_active_at TIMESTAMPTZ NULL} column added by {@code V9}; Hibernate runs in
+     * {@code validate} mode, so the type/nullability MUST match the migration exactly.
+     */
+    @Column(name = "last_active_at")
+    private Instant lastActiveAt;
+
     /** No-arg constructor required by JPA/Hibernate. */
     public User() {}
 
@@ -359,5 +371,13 @@ public class User extends BaseEntity {
 
     public void setAgeVerified(boolean ageVerified) {
         this.ageVerified = ageVerified;
+    }
+
+    public Instant getLastActiveAt() {
+        return lastActiveAt;
+    }
+
+    public void setLastActiveAt(Instant lastActiveAt) {
+        this.lastActiveAt = lastActiveAt;
     }
 }

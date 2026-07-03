@@ -1,8 +1,10 @@
 package io.openskeleton.backend.user;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -43,4 +45,29 @@ public interface UserRepository extends JpaRepository<User, UUID> {
      */
     @Query(value = "SELECT * FROM users WHERE id = :id", nativeQuery = true)
     Optional<User> findByIdIncludingDeleted(@Param("id") UUID id);
+
+    /**
+     * Stamp {@code last_active_at = :now} for the user with {@code firebaseUid}, but ONLY when their
+     * current value is stale — {@code NULL} or older than {@code :threshold} (OSK-73). This is the
+     * authoritative, race- and restart-safe half of the last-active throttle: the {@code WHERE}
+     * predicate means at most one real row write happens per user per throttle window, even across
+     * instances and even if two requests arrive concurrently (the second matches zero rows).
+     *
+     * <p>A <b>bulk JPQL update</b> is used deliberately: it writes only this one column and bypasses
+     * the {@code @Version}/{@code @PreUpdate} lifecycle, so a heartbeat neither advances
+     * {@code updated_at} (which should track profile edits) nor trips optimistic locking against a
+     * concurrent profile save.
+     *
+     * @param firebaseUid the user to stamp (unique key)
+     * @param now the instant to record as last-active
+     * @param threshold only update when the stored value is NULL or strictly before this
+     * @return the number of rows updated — {@code 1} if a stamp was written, {@code 0} if the row was
+     *     absent or already fresh within the window
+     */
+    @Modifying
+    @Query("update User u set u.lastActiveAt = :now "
+            + "where u.firebaseUid = :firebaseUid "
+            + "and (u.lastActiveAt is null or u.lastActiveAt < :threshold)")
+    int touchLastActive(
+            @Param("firebaseUid") String firebaseUid, @Param("now") Instant now, @Param("threshold") Instant threshold);
 }
