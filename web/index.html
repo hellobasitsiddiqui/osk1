@@ -411,6 +411,27 @@
       <button type="button" class="alert-banner__close" id="site-alert-close" aria-label="Dismiss this alert">&times;</button>
     </aside>
 
+    <!--
+      OSK-75: email-verification banner mount + module. Shared, BYTE-IDENTICAL block
+      injected across the pages the same way the OSK-151 alert banner is. Hidden by
+      default; verify-email.js reveals it ONLY when a signed-in user's email is NOT
+      verified (never for a verified user). It sits in normal flow so it stacks cleanly
+      BELOW the fixed OSK-151 alert banner and the two never overlap. On pages without the
+      auth module (window.OSKAuth) it stays hidden and inert, so it is safe site-wide.
+    -->
+    <aside id="verify-email-banner" class="verify-banner" role="region" aria-label="Email verification" hidden>
+      <span class="verify-banner__dot" aria-hidden="true"></span>
+      <div class="verify-banner__body">
+        <p class="verify-banner__msg" id="verify-email-msg">Please verify your email address to secure your account.</p>
+        <div class="verify-banner__actions">
+          <button type="button" class="verify-banner__btn verify-banner__btn--primary" id="verify-email-resend">Resend verification email</button>
+          <button type="button" class="verify-banner__btn" id="verify-email-refresh">I've verified - refresh</button>
+        </div>
+        <p class="verify-banner__status" id="verify-email-status" role="status" aria-live="polite" hidden></p>
+      </div>
+    </aside>
+    <script src="/verify-email.js"></script>
+
     <main class="card">
       <div class="logo" aria-hidden="true">OS</div>
       <h1>OpenSkeleton</h1>

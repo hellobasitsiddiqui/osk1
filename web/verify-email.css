@@ -1,0 +1,126 @@
+/* verify-email.css — styles for the OpenSkeleton email-verification banner (OSK-75).
+ *
+ * Loaded by verify-email.js (an idempotent <link> injection) so a page only needs the
+ * shared mount block + the module <script> — no per-page <head> edit. Every colour is a
+ * SHARED PALETTE TOKEN (--panel/--fg/--accent/--warn/--down/--muted/--border) declared
+ * by the host page's :root, so this banner automatically re-skins for the sketch theme
+ * exactly like the OSK-151 alert banner. Fallback hex values match the default dark
+ * GitHub-Primer palette for the (unlikely) case a page hasn't declared the tokens.
+ *
+ * COEXISTENCE with the OSK-151 alert banner: that banner is position:fixed at the very
+ * top and reserves its own space (body padding-top). THIS banner sits in NORMAL FLOW at
+ * the top of the page content, so it renders BELOW the fixed alert and the two stack
+ * cleanly and never overlap. It is a centred card that lines up with the page's content
+ * column, reading as part of the page rather than a full-bleed strip.
+ */
+
+.verify-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  max-width: 34rem;               /* line up with the page's content column (.wrap) */
+  margin: 0 auto 1.25rem;
+  padding: 0.85rem 1.1rem;
+  background: var(--panel, #161b22);
+  color: var(--fg, #e6edf3);
+  border: 1px solid var(--border, #30363d);
+  border-left: 4px solid var(--warn, #d29922);   /* amber accent: an action is needed */
+  border-radius: 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+/* Native `hidden` must win over the flex display (same pattern as OSK-151). */
+.verify-banner[hidden] { display: none; }
+
+/* The status dot, echoing the OSK-151 alert-banner dot for visual kinship. */
+.verify-banner__dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  flex: 0 0 auto; margin-top: 0.4rem;
+  background: var(--warn, #d29922);
+}
+
+.verify-banner__body {
+  flex: 1 1 auto;
+  min-width: 0;                    /* allow the text to wrap instead of overflowing */
+}
+
+.verify-banner__msg {
+  margin: 0 0 0.6rem;
+  overflow-wrap: anywhere;
+}
+
+.verify-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* Buttons share the OSK-74 tap-target sizing (>=40px tall) so they are comfortable on
+ * touch screens, and use the shared palette tokens. */
+.verify-banner__btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 40px;
+  font: inherit; font-weight: 600;
+  color: var(--fg, #e6edf3);
+  background: transparent;
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  -webkit-appearance: none; appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.verify-banner__btn:hover:not([disabled]) { border-color: var(--muted, #8b949e); }
+.verify-banner__btn:focus-visible { outline: 2px solid var(--accent, #4c8bf5); outline-offset: 2px; }
+.verify-banner__btn[disabled] { opacity: 0.55; cursor: default; }
+
+/* Primary action = Resend, filled with the brand accent. */
+.verify-banner__btn--primary {
+  color: #fff;
+  background: var(--accent, #4c8bf5);
+  border-color: transparent;
+}
+.verify-banner__btn--primary:hover:not([disabled]) { filter: brightness(1.08); }
+
+/* The status line under the buttons (sent / cooldown / error). Tone classes colour it. */
+.verify-banner__status {
+  margin: 0.6rem 0 0;
+  font-size: 0.83rem;
+  color: var(--muted, #8b949e);
+}
+.verify-banner__status[hidden] { display: none; }
+.verify-banner__status--ok    { color: var(--ok, #3fb950); }
+.verify-banner__status--warn  { color: var(--warn, #d29922); }
+.verify-banner__status--error { color: var(--down, #f85149); }
+.verify-banner__status--muted { color: var(--muted, #8b949e); }
+
+/* OSK-117 phone breakpoint (~360–430px): mirror the siblings. Full-width buttons so they
+ * don't squash, and a touch less padding. */
+@media (max-width: 640px) {
+  .verify-banner { padding: 0.8rem 0.9rem; font-size: 0.875rem; }
+  .verify-banner__actions { flex-direction: column; }
+  .verify-banner__btn { width: 100%; }
+}
+
+/* ================================================================== *
+ * OSK-127 — sketch / blueprint theme re-skin. Scoped under [data-theme="sketch"]
+ * so the default theme above is untouched. Matches the hand-drawn surfaces the
+ * sibling pages use for panels/buttons (wobbly ink outlines, light paper fill).
+ * The palette tokens already flip via :root, so only the shapes need overriding.
+ * ================================================================== */
+[data-theme="sketch"] .verify-banner {
+  border: 1.5px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+}
+[data-theme="sketch"] .verify-banner__btn {
+  border: 1.5px solid var(--border);
+  border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+  box-shadow: 1px 2px 0 rgba(22, 40, 59, 0.13);
+}
+[data-theme="sketch"] .verify-banner__btn--primary { color: #fff; }
