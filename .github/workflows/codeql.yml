@@ -14,8 +14,17 @@
 #
 # LANGUAGE: The backend is Java 21 (backend/pom.xml, <java.version>21</java.version>).
 #       CodeQL analyses Java and Kotlin together under the single "java-kotlin"
-#       language pack. We set up Temurin JDK 21 and use build-mode: autobuild so
-#       CodeQL builds the Maven module itself to get an accurate code database.
+#       language pack. We set up Temurin JDK 21 and build the backend Maven module
+#       explicitly (build-mode: manual) to get an accurate compiled database.
+#
+#       Why manual and not autobuild: since OSK-146 the repo also contains a
+#       Capacitor Android Gradle project under android/. CodeQL's autobuild would
+#       discover that Gradle project and try to build it, which fails on the
+#       CodeQL runner (it has no Android SDK) and is unrelated to backend SAST.
+#       Compiling only backend/ with Maven keeps the scan scoped to the server
+#       code exactly as before. The Android shell's single Java file (a thin
+#       BridgeActivity subclass) carries no security-relevant logic and its
+#       compile is covered separately by the Android workflow (android.yml).
 #
 # SECURITY: Every third-party action is pinned to a full commit SHA (never a
 #       moving tag) so a re-pointed tag cannot inject code into a job that holds
@@ -70,15 +79,24 @@ jobs:
           java-version: '21'
           cache: maven
 
-      # Initialise the CodeQL database for Java/Kotlin. build-mode: autobuild lets
-      # CodeQL detect the Maven project (backend/) and build it automatically to
-      # produce an accurate database; with build-mode set, the analyze step below
-      # performs the build — no separate autobuild step is needed.
+      # Initialise the CodeQL database for Java/Kotlin in MANUAL build mode: the
+      # explicit backend build step below runs between init and analyze and
+      # CodeQL traces it to construct the database. (See the LANGUAGE note above
+      # for why this is manual rather than autobuild.)
       - name: Initialize CodeQL
         uses: github/codeql-action/init@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3.36.3
         with:
           languages: java-kotlin
-          build-mode: autobuild
+          build-mode: manual
+
+      # Manual build: compile ONLY the backend Maven module (main + test sources)
+      # so CodeQL traces a real backend build. Deliberately scoped to backend/ and
+      # never touches android/ (the Capacitor Gradle project). No tests run —
+      # compiling is enough to populate the CodeQL database. Toolchain matches
+      # ci.yml (Temurin JDK 21 + the Maven wrapper).
+      - name: Build backend for CodeQL
+        working-directory: backend
+        run: ./mvnw -B -ntp -DskipTests clean test-compile
 
       # Run the CodeQL queries and upload results (SARIF) to the Security tab.
       # NOTE: keep this SHA identical to the init SHA above — same action repo.
