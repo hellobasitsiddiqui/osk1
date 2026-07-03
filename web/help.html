@@ -394,7 +394,7 @@
       </section>
 
       <!-- How to sign in. These are the INTENDED sign-in methods for the app. -->
-      <section class="panel">
+      <section class="panel" id="help-signing-in">
         <h2>Signing in</h2>
         <div class="prose">
           <p>
@@ -442,7 +442,7 @@
       </section>
 
       <!-- Where to get support — includes the mailto: contact line. -->
-      <section class="panel">
+      <section class="panel" id="help-support">
         <h2>Getting support</h2>
         <div class="prose">
           <p>
@@ -632,5 +632,13 @@
         });
       })();
     </script>
+    <!--
+      OSK-105: onboarding product tour — per-page coachmarks + a pausable, replayable
+      whole-site walkthrough. Self-contained: this ONE include injects its own themed
+      styles + a "?" launcher and holds its per-page step registry internally, so no
+      other page markup changes. Loads after config.js (in <head>) so it can read the
+      optional window.__APP_CONFIG__.tour block. Identical include across every page.
+    -->
+    <script src="/tour.js"></script>
   </body>
 </html>

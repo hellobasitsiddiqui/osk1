@@ -64,6 +64,22 @@ window.__APP_CONFIG__ = {
     endsAt: null,
   },
 
+  // OSK-105: onboarding product tour (web/tour.js). OPTIONAL — the tour ships with
+  // safe defaults and works with this block absent, so it exists only to give an
+  // operator a runtime kill-switch without a code change. Every web page reads it via
+  // window.__APP_CONFIG__.tour.
+  //
+  //   enabled           — master on/off for the whole tour AND its "?" launcher on
+  //                       every page. false = no tour, no launcher anywhere.
+  //   autoStartFirstRun — whether a brand-new visitor is shown the tour automatically
+  //                       ONCE (guarded by a localStorage flag so it never nags again
+  //                       after they dismiss it). Set false to make the tour purely
+  //                       launch-on-demand from the "?" affordance.
+  tour: {
+    enabled: true,
+    autoStartFirstRun: true,
+  },
+
   // OSK-74: Firebase Web App config for the web auth guard (web/auth.js). auth.js
   // reads this at runtime to initialise the Firebase JS SDK and gate the protected
   // /app page (sign-in with email/password or Google, then call /api/v1/me).
