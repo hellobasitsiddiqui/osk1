@@ -1,50 +1,52 @@
 <!DOCTYPE html>
 <!--
-  app.html — OpenSkeleton protected account area (OSK-74, the web-auth keystone).
+  profile.html — OpenSkeleton self-service edit-profile page (OSK-86).
 
-  WHAT: the first GATED page in the web front-end. It is split into three regions
-  that the auth guard shows/hides based on Firebase Auth state:
-    - a NOTICE region  — shown for the "auth not configured" / loading / error states,
+  WHAT: the signed-in user's OWN edit-profile screen. Like the OSK-74 /app page it is split
+  into three regions the auth guard shows/hides based on Firebase Auth state:
+    - a NOTICE region  — the "auth not configured" / loading / error states,
     - a SIGN-IN region — shown when signed OUT (email+password form + "Sign in with
-      Google"), and
-    - a protected APP region — shown ONLY when signed IN. As proof of end-to-end
-      wiring it calls the backend `GET /api/v1/me` with the caller's Firebase ID token
-      (`Authorization: Bearer …`) and renders the returned profile. Sign-out is here too.
+      Google"), reusing the exported OSKAuth API so a user can sign in and edit in one place,
+    - a protected FORM region — shown ONLY when signed IN. It loads the caller's current
+      profile via GET /api/v1/me, presents an editable form for the OSK-67 profile fields,
+      and on save sends a SPARSE PATCH /api/v1/me (only the fields the user changed). The
+      backend's 400 ProblemDetail validation errors render inline next to each field; a
+      success line shows on save; 401/403/network errors degrade gracefully.
 
-  Design (mirrors index/status/ops/help so the pages read as one product):
-  - Self-contained page: inlined CSS + guard/theme/alert scripts, no bundler. The only
-    external code is the Firebase SDK, which web/auth.js loads LAZILY from gstatic at a
-    PINNED version — and only when auth is actually configured (empty apiKey => no
-    network at all). Same dark GitHub-Primer palette + sketch theme + alert banner as
-    the siblings.
-  - Config-driven: the Firebase Web App config lives in config.js
-    (window.__APP_CONFIG__.firebase); the backend base URL is config.js's apiBaseUrl.
-    Nothing here is hardcoded, so this page works the instant the human fills in the
-    apiKey/appId minted by the Firebase Web App registration (OSK-92).
-  - Graceful "not configured": until OSK-92 supplies apiKey, the guard shows a clear
-    notice and keeps the protected content hidden — it never crashes or blanks.
-  - XSS-safe: every dynamic string (notice text, error messages, the /api/v1/me profile)
-    is written with textContent / createElement only — never innerHTML.
+  Design (mirrors index/status/ops/help/app so the pages read as one product):
+  - Self-contained page: inlined CSS + the shared theme/alert scripts, no bundler. The
+    page-specific logic lives in web/profile.js (loaded as a plain <script src>, like
+    auth.js), which is ALSO Node-requirable so the load/diff/save/error behaviour is
+    unit-simulated headlessly (web/e2e/profile.simulation.cjs). Same dark GitHub-Primer
+    palette + sketch theme + alert banner as the siblings.
+  - Config-driven: the Firebase Web App config lives in config.js; the backend base URL is
+    config.js's apiBaseUrl. Nothing here is hardcoded, so it works the instant the human
+    fills in the apiKey/appId minted by the Firebase Web App registration (OSK-92).
+  - Graceful "not configured": until OSK-92 supplies apiKey, the guard shows a clear notice
+    and keeps the form hidden — it never crashes or blanks.
+  - XSS-safe: every dynamic string (notice text, profile values, error messages) is written
+    with .value / .textContent only — never innerHTML.
 
-  Routing: reachable at the clean path "/app" via a Firebase Hosting rewrite
-  ("/app" -> "/app.html", added to firebase.json ahead of the SPA catch-all) and also
-  directly at "/app.html".
+  Routing: reachable directly at "/profile.html". (Deliberately linked as a static file, not
+  a clean-path rewrite, to avoid editing the shared firebase.json while other agents are
+  editing the web pages concurrently — the one shared edit this ticket makes is a single nav
+  link in app.html.)
 -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenSkeleton Account</title>
+    <title>Edit your profile — OpenSkeleton</title>
     <!--
       Runtime config, loaded exactly as the sibling pages load it: a plain (non-module,
       non-hashed) script so CD can inject config at DEPLOY time without rebuilding.
-      auth.js reads window.__APP_CONFIG__.firebase; the guard reads apiBaseUrl.
+      auth.js reads window.__APP_CONFIG__.firebase; profile.js reads apiBaseUrl.
     -->
     <script src="/config.js"></script>
     <!--
-      OSK-127: apply the persisted theme BEFORE first paint to avoid a flash of the
-      wrong theme. Only "sketch" is a non-default; anything else falls through to the
-      default dark theme. Identical to the other pages.
+      OSK-127: apply the persisted theme BEFORE first paint to avoid a flash of the wrong
+      theme. Only "sketch" is a non-default; anything else falls through to the default dark
+      theme. Identical to the other pages.
     -->
     <script>
       (function () {
@@ -58,16 +60,20 @@
       })();
     </script>
     <!--
-      OSK-74: the auth module. Plain <script src> (non-module) like every other page
+      OSK-74: the shared auth module. Plain <script src> (non-module) like every other page
       script; it lazily dynamic-import()s the pinned Firebase SDK itself. Loaded in the
-      <head> (not deferred) so window.OSKAuth exists before the guard script at the foot
-      of the body runs. Guarded internally against a missing apiKey ("auth not
-      configured"), so it can never crash the page.
+      <head> (not deferred) so window.OSKAuth exists before profile.js runs. Guarded
+      internally against a missing apiKey ("auth not configured"), so it can never crash.
     -->
     <script src="/auth.js"></script>
+    <!--
+      OSK-86: this page's logic. Plain <script src> like auth.js. It waits for
+      DOMContentLoaded internally, so load order relative to the body markup is safe.
+    -->
+    <script src="/profile.js"></script>
     <style>
-      /* Shared palette + surfaces with status.html / ops.html / help.html so all the
-         pages are visually identical. Same Primer green/amber/red status hues. */
+      /* Shared palette + surfaces with app/status/ops/help so all the pages are visually
+         identical. Same Primer green/amber/red status hues. */
       :root {
         --bg: #0d1117;
         --fg: #e6edf3;
@@ -104,7 +110,7 @@
       h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.02em; }
       .sub { color: var(--muted); margin: 0.15rem 0 0; font-size: 0.9rem; }
 
-      /* --- Panels (shared with ops/status/help) ---------------------------- */
+      /* --- Panels (shared with app/ops/status/help) ------------------------ */
       .panel {
         border: 1px solid var(--border);
         border-radius: 10px;
@@ -112,9 +118,7 @@
         padding: 1.25rem 1.35rem;
         margin-bottom: 1.25rem;
       }
-      .panel h2 {
-        font-size: 1.05rem; margin: 0 0 0.35rem; letter-spacing: -0.01em;
-      }
+      .panel h2 { font-size: 1.05rem; margin: 0 0 0.35rem; letter-spacing: -0.01em; }
       .panel__hint { color: var(--muted); font-size: 0.85rem; margin: 0 0 1rem; }
       .panel__hint code {
         font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -122,19 +126,13 @@
       }
 
       /* --- Guard NOTICE (not-configured / loading / error) ----------------- */
-      /* A quiet, left-accented strip like ops.html's health box. Neutral by default;
-         it never looks like an error unless it is one. */
-      .notice {
-        border-left-width: 5px;
-        border-left-color: var(--pending);
-      }
+      .notice { border-left-width: 5px; border-left-color: var(--pending); }
       .notice__text { margin: 0; color: var(--fg); }
 
-      /* --- Sign-in form ----------------------------------------------------- */
+      /* --- Fields (shared with app.html's sign-in form) -------------------- */
       .field { display: block; margin-bottom: 0.85rem; }
       .field__label {
-        display: block; font-size: 0.8rem; color: var(--muted);
-        margin-bottom: 0.3rem;
+        display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.3rem;
       }
       .field__input {
         width: 100%;
@@ -152,9 +150,20 @@
         outline-offset: 1px;
         border-color: var(--accent);
       }
+      /* A select needs a little room for the native chevron. */
+      select.field__input { padding-right: 1.6rem; }
+      /* Inputs the backend flagged in a 400 get a red border so the error's target is
+         unmistakable (paired with the inline .field__error text below). */
+      .field__input[aria-invalid="true"] { border-color: var(--down); }
+      .field__input[aria-invalid="true"]:focus-visible { outline-color: var(--down); }
+      /* Small muted helper text under an input (units / examples). */
+      .field__hint { display: block; color: var(--muted); font-size: 0.76rem; margin-top: 0.3rem; }
+      /* Per-field inline validation error from the backend 400 ProblemDetail. Hidden until set. */
+      .field__error { display: block; color: var(--down); font-size: 0.78rem; margin-top: 0.3rem; }
+      .field__error[hidden] { display: none; }
 
-      /* Buttons: a shared base + a primary/google/ghost variant. All >=44px tall so
-         they are comfortable tap targets on touch screens (matches OSK-140). */
+      /* Buttons: a shared base + primary/ghost variants; all >=44px tall for comfortable
+         touch targets (matches app.html / OSK-140). */
       .btn {
         display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
         min-height: 44px;
@@ -168,10 +177,7 @@
       }
       .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       .btn[disabled] { opacity: 0.6; cursor: default; }
-      .btn--primary {
-        width: 100%;
-        color: #fff; background: var(--accent); border-color: transparent;
-      }
+      .btn--primary { width: 100%; color: #fff; background: var(--accent); border-color: transparent; }
       .btn--primary:hover:not([disabled]) { filter: brightness(1.08); }
       .btn--google { width: 100%; color: var(--fg); background: transparent; }
       .btn--google:hover:not([disabled]) { border-color: var(--muted); }
@@ -193,29 +199,27 @@
       }
 
       /* Inline sign-in error (bad password, popup closed, …). Hidden until set. */
-      .form-error {
-        margin: 0.85rem 0 0;
-        color: var(--down);
-        font-size: 0.85rem;
-      }
+      .form-error { margin: 0.85rem 0 0; color: var(--down); font-size: 0.85rem; }
       .form-error[hidden] { display: none; }
+      /* Save success / "no changes" line. Hidden until set. */
+      .form-success { margin: 0.85rem 0 0; color: var(--ok); font-size: 0.9rem; font-weight: 600; }
+      .form-success[hidden] { display: none; }
 
-      /* --- Protected app region -------------------------------------------- */
+      /* --- Protected form region ------------------------------------------- */
       .app__bar {
         display: flex; align-items: center; justify-content: space-between;
         gap: 0.75rem; margin-bottom: 0.35rem;
       }
       .app__bar h2 { margin: 0; }
-      .profile__status { color: var(--muted); font-size: 0.9rem; margin: 0.5rem 0 0; }
-      /* Profile as a two-column key/value list. Rendered from /api/v1/me with
-         createElement + textContent only (XSS-safe). */
+      .profile__status { color: var(--muted); font-size: 0.9rem; margin: 0.75rem 0; }
+      .profile__status[hidden] { display: none; }
+      /* Read-only identity context as a two-column key/value list (mirrors app.html). */
       .profile__fields {
-        margin: 0.75rem 0 0;
+        margin: 0.5rem 0 1rem;
         display: grid;
         grid-template-columns: minmax(6rem, auto) 1fr;
         gap: 0.4rem 1rem;
       }
-      .profile__fields[hidden] { display: none; }
       .profile__fields dt {
         color: var(--muted); font-size: 0.82rem; text-transform: uppercase;
         letter-spacing: 0.04em; align-self: center;
@@ -226,8 +230,15 @@
         font-size: 0.9rem;
         overflow-wrap: anywhere;
       }
+      .profile-form[hidden] { display: none; }
+      .form-actions { margin-top: 1.1rem; }
+      /* A subtle divider above the read-only identity block. */
+      .form-section-label {
+        color: var(--muted); font-size: 0.72rem; text-transform: uppercase;
+        letter-spacing: 0.06em; margin: 0 0 0.4rem;
+      }
 
-      /* --- Footer (shared with ops/status/help) ---------------------------- */
+      /* --- Footer (shared with app/ops/status/help) ------------------------ */
       .foot {
         display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
         margin-top: 1.5rem; color: var(--muted); font-size: 0.8rem;
@@ -238,8 +249,8 @@
       .foot__byline a { color: var(--muted); text-decoration: none; }
       .foot__byline a:hover { color: var(--accent); text-decoration: underline; }
 
-      /* OSK-117 mobile-web polish: a single phone breakpoint (~360–430px wide); the
-         desktop layout above is untouched. Mirrors index/status/ops/help. */
+      /* OSK-117 mobile-web polish: a single phone breakpoint (~360–430px wide); the desktop
+         layout above is untouched. Mirrors app/index/status/ops/help. */
       @media (max-width: 640px) {
         body { padding: 1.5rem 1rem 2.5rem; }
         h1 { font-size: 1.3rem; }
@@ -247,7 +258,7 @@
         /* Stack the sign-out button under the heading so neither squashes. */
         .app__bar { flex-direction: column; align-items: stretch; }
         .btn--ghost { width: 100%; }
-        /* Single-column profile list is easier to read on a narrow screen. */
+        /* Single-column identity list is easier to read on a narrow screen. */
         .profile__fields { grid-template-columns: 1fr; gap: 0.15rem 0; }
         .profile__fields dt { margin-top: 0.6rem; }
         .foot a { display: inline-block; padding: 0.25rem 0; }
@@ -255,9 +266,8 @@
 
       /* ================================================================== *
        * OSK-151 — site-wide, config-driven, dismissible alert banner.
-       * Identical block across index/status/ops/help/app. See index.html for
-       * the full rationale. Every colour is a shared palette token so it re-skins
-       * for the sketch theme automatically.
+       * Identical block across index/status/ops/help/app/profile. Every colour is a
+       * shared palette token so it re-skins for the sketch theme automatically.
        * ================================================================== */
       .alert-banner {
         position: fixed;
@@ -288,10 +298,7 @@
       .alert-banner--info     .alert-banner__dot { background: var(--accent); }
       .alert-banner--warning  .alert-banner__dot { background: var(--warn, #d29922); }
       .alert-banner--critical .alert-banner__dot { background: var(--down, #f85149); }
-      .alert-banner__msg {
-        flex: 1 1 auto; min-width: 0;
-        overflow-wrap: anywhere;
-      }
+      .alert-banner__msg { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
       .alert-banner__close {
         flex: 0 0 auto;
         font: inherit;
@@ -308,7 +315,6 @@
       }
       .alert-banner__close:hover { color: var(--fg); }
       .alert-banner__close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
       @media (max-width: 640px) {
         .alert-banner { padding: 0.7rem 0.9rem; font-size: 0.875rem; }
         .alert-banner__close { font-size: 1.4rem; padding: 0.1rem 0.5rem; }
@@ -316,10 +322,9 @@
 
       /* ================================================================== *
        * OSK-127 — selectable "sketch / blueprint" theme + its toggle.
-       * The default-theme rules above are untouched; everything theme-specific is
-       * scoped under [data-theme="sketch"]. This block matches the siblings; it
-       * additionally sketch-ifies THIS page's inputs/buttons/profile so the paper
-       * theme is consistent here too.
+       * The default-theme rules above are untouched; everything theme-specific is scoped
+       * under [data-theme="sketch"]. Matches the siblings; additionally sketch-ifies THIS
+       * page's inputs/buttons so the paper theme is consistent here too.
        * ================================================================== */
       .theme-switch { margin-top: 1rem; }
       .theme-toggle {
@@ -363,7 +368,6 @@
       [data-theme="sketch"] h1,
       [data-theme="sketch"] h2,
       [data-theme="sketch"] h3 { letter-spacing: 0; }
-      [data-theme="sketch"] .card,
       [data-theme="sketch"] .panel {
         background: var(--panel);
         border: 1.5px solid var(--border);
@@ -384,8 +388,7 @@
         border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
         box-shadow: 1px 2px 0 rgba(22, 40, 59, 0.13);
       }
-      /* OSK-74 sketch touches: paper-ify the inputs + buttons so the auth panels
-         match the hand-drawn surfaces. Wobbly ink outlines + light paper fill. */
+      /* Paper-ify the inputs + buttons so the form matches the hand-drawn surfaces. */
       [data-theme="sketch"] .field__input {
         background: rgba(255, 255, 255, 0.6);
         border-color: var(--border);
@@ -401,9 +404,9 @@
   </head>
   <body>
     <!--
-      OSK-151: site-wide alert banner mount. Rendered hidden by default; the banner
-      script at the foot reveals it only when an alert is configured, in-window, and not
-      dismissed. Identical across the pages.
+      OSK-151: site-wide alert banner mount. Rendered hidden by default; the banner script at
+      the foot reveals it only when an alert is configured, in-window, and not dismissed.
+      Identical across the pages.
     -->
     <aside id="site-alert" class="alert-banner" role="alert" aria-live="assertive" hidden>
       <span class="alert-banner__dot" aria-hidden="true"></span>
@@ -415,15 +418,14 @@
       <header class="head">
         <div class="logo" aria-hidden="true">OS</div>
         <div>
-          <h1>OpenSkeleton Account</h1>
-          <p class="sub">Your signed-in area — protected by Firebase Authentication.</p>
+          <h1>Edit your profile</h1>
+          <p class="sub">Update your account details — protected by Firebase Authentication.</p>
         </div>
       </header>
 
       <!--
-        NOTICE region (AC: graceful "auth not configured"). Shown by the guard for the
-        not-configured / loading / error states with an explanatory line. role=status +
-        aria-live=polite so assistive tech announces state changes. Hidden by default.
+        NOTICE region (graceful "auth not configured"). Shown by the guard for the
+        not-configured / loading / error states with an explanatory line. Hidden by default.
       -->
       <section id="auth-notice" class="panel notice" role="status" aria-live="polite" hidden>
         <p id="auth-notice-text" class="notice__text"></p>
@@ -431,12 +433,11 @@
 
       <!--
         SIGN-IN region — shown by the guard when SIGNED OUT. Email/password form plus a
-        "Sign in with Google" popup button. Hidden by default so signed-in users and the
-        not-configured state never see it.
+        "Sign in with Google" popup button (reusing the shared OSKAuth API). Hidden by default.
       -->
       <section id="auth-signin" class="panel" aria-labelledby="signin-heading" hidden>
         <h2 id="signin-heading">Sign in</h2>
-        <p class="panel__hint">Sign in to access your account.</p>
+        <p class="panel__hint">Sign in to view and edit your profile.</p>
 
         <form id="signin-form" novalidate>
           <label class="field">
@@ -470,35 +471,158 @@
       </section>
 
       <!--
-        PROTECTED region — shown by the guard ONLY when SIGNED IN. Proves the full path:
-        it reads a fresh Firebase ID token and calls GET /api/v1/me with an
-        `Authorization: Bearer` header, then renders the returned profile. Sign-out lives
-        here. Hidden by default.
+        PROTECTED FORM region — shown by the guard ONLY when SIGNED IN. profile.js loads the
+        caller's profile (GET /api/v1/me), fills the form, and PATCHes only the changed
+        fields on save. Hidden by default.
       -->
-      <section id="auth-app" class="panel" aria-labelledby="app-heading" hidden>
+      <section id="profile-app" class="panel" aria-labelledby="profile-heading" hidden>
         <div class="app__bar">
-          <h2 id="app-heading">Your account</h2>
+          <h2 id="profile-heading">Your profile</h2>
           <button id="signout-btn" class="btn btn--ghost" type="button">Sign out</button>
         </div>
         <p class="panel__hint">
-          Signed in. This calls the backend <code>/api/v1/me</code> with your Firebase ID
-          token to load your profile.
+          Update your details below and Save. Changes are written to your account via
+          <code>/api/v1/me</code>.
         </p>
-        <div class="profile" role="status" aria-live="polite">
-          <p id="profile-status" class="profile__status">Loading your profile…</p>
-          <dl id="profile-fields" class="profile__fields" hidden></dl>
-        </div>
+
+        <!-- Read-only identity context (from the verified token — not editable here). -->
+        <p class="form-section-label">Account</p>
+        <dl class="profile__fields">
+          <dt>User ID</dt><dd id="pf-uid">—</dd>
+          <dt>Email</dt><dd id="pf-email">—</dd>
+          <dt>Role</dt><dd id="pf-role">—</dd>
+        </dl>
+
+        <!--
+          Loading / empty status line. Shown while GET /api/v1/me is in flight; also the
+          general-error mount for a failed load (401/403/network). Hidden once the form shows.
+        -->
+        <p id="profile-status" class="profile__status" role="status" aria-live="polite" hidden></p>
+        <p id="profile-general-error" class="form-error" role="alert" hidden></p>
+
+        <!--
+          The edit form. Hidden until the profile has loaded; profile.js reveals it. Every
+          editable field has an inline .field__error span the backend 400 ProblemDetail
+          populates. novalidate: the backend is the source of truth for validation, so we
+          surface ITS messages rather than the browser's.
+        -->
+        <form id="profile-form" class="profile-form" novalidate hidden>
+          <p class="form-section-label">Details</p>
+
+          <label class="field">
+            <span class="field__label">First name</span>
+            <input id="pf-firstName" class="field__input" type="text" autocomplete="given-name"
+                   placeholder="e.g. Ada" aria-describedby="err-firstName" />
+            <span id="err-firstName" class="field__error" role="alert" hidden></span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Last name</span>
+            <input id="pf-lastName" class="field__input" type="text" autocomplete="family-name"
+                   placeholder="e.g. Lovelace" aria-describedby="err-lastName" />
+            <span id="err-lastName" class="field__error" role="alert" hidden></span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Display name</span>
+            <input id="pf-displayName" class="field__input" type="text" autocomplete="nickname"
+                   placeholder="How your name appears" aria-describedby="err-displayName" />
+            <span id="err-displayName" class="field__error" role="alert" hidden></span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">City</span>
+            <input id="pf-city" class="field__input" type="text" autocomplete="address-level2"
+                   placeholder="e.g. London" aria-describedby="err-city" />
+            <span id="err-city" class="field__error" role="alert" hidden></span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Age</span>
+            <input id="pf-age" class="field__input" type="number" inputmode="numeric"
+                   min="13" max="120" step="1" placeholder="e.g. 30" aria-describedby="err-age" />
+            <span class="field__hint">Between 13 and 120.</span>
+            <span id="err-age" class="field__error" role="alert" hidden></span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Phone</span>
+            <input id="pf-phone" class="field__input" type="tel" autocomplete="tel"
+                   placeholder="e.g. +44 20 7946 0000" aria-describedby="err-phone" />
+            <span id="err-phone" class="field__error" role="alert" hidden></span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Notification preference</span>
+            <select id="pf-notificationPreference" class="field__input" aria-describedby="err-notificationPreference">
+              <option value="EMAIL">Email</option>
+              <option value="PUSH">Push</option>
+              <option value="NONE">None</option>
+            </select>
+            <span class="field__hint">How we should reach you.</span>
+            <span id="err-notificationPreference" class="field__error" role="alert" hidden></span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Timezone</span>
+            <input id="pf-timezone" class="field__input" type="text" list="tz-list"
+                   autocomplete="off" spellcheck="false" placeholder="e.g. Europe/London"
+                   aria-describedby="err-timezone" />
+            <span class="field__hint">Your IANA time-zone id.</span>
+            <span id="err-timezone" class="field__error" role="alert" hidden></span>
+          </label>
+          <datalist id="tz-list">
+            <option value="UTC"></option>
+            <option value="Europe/London"></option>
+            <option value="Europe/Paris"></option>
+            <option value="Europe/Berlin"></option>
+            <option value="America/New_York"></option>
+            <option value="America/Chicago"></option>
+            <option value="America/Los_Angeles"></option>
+            <option value="Asia/Dubai"></option>
+            <option value="Asia/Karachi"></option>
+            <option value="Asia/Kolkata"></option>
+            <option value="Asia/Singapore"></option>
+            <option value="Asia/Tokyo"></option>
+            <option value="Australia/Sydney"></option>
+          </datalist>
+
+          <label class="field">
+            <span class="field__label">Locale</span>
+            <input id="pf-locale" class="field__input" type="text" list="locale-list"
+                   autocomplete="off" spellcheck="false" placeholder="e.g. en-GB"
+                   aria-describedby="err-locale" />
+            <span class="field__hint">A BCP-47 language tag.</span>
+            <span id="err-locale" class="field__error" role="alert" hidden></span>
+          </label>
+          <datalist id="locale-list">
+            <option value="en-GB"></option>
+            <option value="en-US"></option>
+            <option value="fr-FR"></option>
+            <option value="de-DE"></option>
+            <option value="es-ES"></option>
+            <option value="pt-BR"></option>
+            <option value="ar-SA"></option>
+            <option value="ur-PK"></option>
+            <option value="hi-IN"></option>
+            <option value="zh-CN"></option>
+            <option value="ja-JP"></option>
+          </datalist>
+
+          <div class="form-actions">
+            <button id="save-btn" class="btn btn--primary" type="submit">Save changes</button>
+            <p id="profile-success" class="form-success" role="status" aria-live="polite" hidden></p>
+          </div>
+        </form>
       </section>
 
       <footer class="foot">
         <span class="foot__nav">
           <a href="/">&larr; OpenSkeleton home</a>
           &nbsp;&middot;&nbsp;
-          <a href="/help">Help</a>
+          <a href="/app">Account</a>
           &nbsp;&middot;&nbsp;
-          <a href="/admin">Admin</a>
-          &nbsp;&middot;&nbsp; <a href="/history">Profile history</a>
-          &nbsp;&middot;&nbsp;<a href="/profile.html">Edit profile</a>
+          <a href="/help">Help</a>
         </span>
         <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Theme: Default</button>
         <span class="foot__byline">A product of <a href="https://openskeleton.dev" target="_blank" rel="noopener">OpenSkeleton</a></span>
@@ -506,217 +630,9 @@
     </main>
 
     <script>
-      // OSK-74 — protected-route GUARD wiring. Vanilla, dependency-free. It drives the
-      // three body regions from window.OSKAuth (web/auth.js) and, when signed in, calls
-      // GET /api/v1/me with the Firebase ID token to prove end-to-end wiring.
-      //
-      // The DECISION logic lives in the pure OSKAuth.computeGuardView / applyGuardView
-      // helpers (the same functions a Node simulation asserts — see
-      // web/e2e/auth-guard.simulation.cjs); this script only wires events + the /me
-      // fetch. XSS-safe: only textContent / createElement are ever used.
-      (function () {
-        "use strict";
-
-        var cfg = window.__APP_CONFIG__ || {};
-        var A = window.OSKAuth;
-
-        // The regions the guard shows/hides. Passed straight to applyGuardView.
-        var els = {
-          signIn: document.getElementById("auth-signin"),
-          app: document.getElementById("auth-app"),
-          notice: document.getElementById("auth-notice"),
-          noticeText: document.getElementById("auth-notice-text"),
-        };
-
-        // Hard fallback: if auth.js somehow failed to load, the module global is absent.
-        // Show a plain notice instead of a silently broken page.
-        if (!A) {
-          if (els.notice) { els.notice.hidden = false; }
-          if (els.noticeText) {
-            els.noticeText.textContent =
-              "The sign-in module failed to load. Please refresh the page.";
-          }
-          return;
-        }
-
-        var errorEl = document.getElementById("signin-error");
-        var form = document.getElementById("signin-form");
-        var emailEl = document.getElementById("signin-email");
-        var passwordEl = document.getElementById("signin-password");
-        var submitBtn = document.getElementById("signin-submit");
-        var googleBtn = document.getElementById("google-btn");
-        var signoutBtn = document.getElementById("signout-btn");
-        var profileStatus = document.getElementById("profile-status");
-        var profileFields = document.getElementById("profile-fields");
-
-        // --- Small helpers ----------------------------------------------------
-
-        function showError(message) {
-          if (!errorEl) { return; }
-          errorEl.textContent = message || "";
-          errorEl.hidden = !message;
-        }
-        function clearError() { showError(""); }
-
-        // Enable/disable the sign-in buttons while a request is in flight, so a user
-        // can't fire two popups / double-submit.
-        function setBusy(busy) {
-          if (submitBtn) { submitBtn.disabled = busy; }
-          if (googleBtn) { googleBtn.disabled = busy; }
-        }
-
-        // Remove every child of a node without innerHTML (keeps us strictly XSS-safe).
-        function clearChildren(node) {
-          while (node && node.firstChild) { node.removeChild(node.firstChild); }
-        }
-
-        // Render one key/value profile row (dt + dd) using textContent only.
-        function appendField(dl, key, value) {
-          var dt = document.createElement("dt");
-          dt.textContent = key;
-          var dd = document.createElement("dd");
-          // Objects/arrays are stringified; primitives shown as-is. Never innerHTML.
-          dd.textContent =
-            value !== null && typeof value === "object"
-              ? JSON.stringify(value)
-              : String(value);
-          dl.appendChild(dt);
-          dl.appendChild(dd);
-        }
-
-        // --- Protected example: GET /api/v1/me with the Bearer token ----------
-
-        function loadProfile() {
-          if (!profileStatus || !profileFields) { return; }
-          clearChildren(profileFields);
-          profileFields.hidden = true;
-          profileStatus.hidden = false;
-          profileStatus.textContent = "Loading your profile…";
-
-          A.getIdToken()
-            .then(function (token) {
-              if (!token) {
-                profileStatus.textContent = "No active session.";
-                return null;
-              }
-              // Backend base URL from config.js; trailing slash trimmed so we never
-              // build "//api". "" (same-origin) until the backend is wired.
-              var base = (cfg.apiBaseUrl || "").replace(/\/+$/, "");
-              return fetch(base + "/api/v1/me", {
-                headers: {
-                  Authorization: "Bearer " + token,
-                  Accept: "application/json",
-                },
-                cache: "no-store",
-              }).then(function (r) {
-                // 401 handled gracefully (AC): token rejected/expired — tell the user
-                // and stop, rather than showing a broken profile.
-                if (r.status === 401) {
-                  profileStatus.textContent =
-                    "Your session isn't authorized (401). Try signing out and back in.";
-                  return null;
-                }
-                if (!r.ok) {
-                  profileStatus.textContent =
-                    "Couldn't load your profile (HTTP " + r.status + ").";
-                  return null;
-                }
-                return r.json();
-              });
-            })
-            .then(function (profile) {
-              if (!profile || typeof profile !== "object") { return; }
-              // Render every field of the returned profile as a key/value row.
-              var keys = Object.keys(profile);
-              if (keys.length === 0) {
-                profileStatus.textContent = "Signed in — your profile is empty.";
-                return;
-              }
-              for (var i = 0; i < keys.length; i++) {
-                appendField(profileFields, keys[i], profile[keys[i]]);
-              }
-              profileStatus.hidden = true;
-              profileFields.hidden = false;
-            })
-            .catch(function () {
-              // Network/CORS/backend-down: degrade to a clear line, never throw.
-              profileStatus.textContent =
-                "Couldn't reach the backend to load your profile.";
-            });
-        }
-
-        // --- Render loop ------------------------------------------------------
-
-        // Recompute the view from the current auth state and apply it. When we land in
-        // the signed-in state, kick off the /api/v1/me fetch.
-        var wasSignedIn = false;
-        function render() {
-          var view = A.computeGuardView(A.getState());
-          A.applyGuardView(view, els);
-          if (view.mode === "signed-in") {
-            // Only (re)load the profile on the transition INTO signed-in, not on every
-            // repaint, to avoid redundant /me calls.
-            if (!wasSignedIn) { loadProfile(); }
-            wasSignedIn = true;
-          } else {
-            wasSignedIn = false;
-          }
-        }
-
-        // Paint immediately (loading/not-configured), then on every auth-state change,
-        // and once auth has settled (covers the not-configured/error states that never
-        // emit an auth event).
-        render();
-        A.onAuthStateChanged(render);
-        A.ready.then(render).catch(render);
-
-        // --- Events -----------------------------------------------------------
-
-        if (form) {
-          form.addEventListener("submit", function (ev) {
-            ev.preventDefault();
-            clearError();
-            var email = emailEl ? emailEl.value.trim() : "";
-            var password = passwordEl ? passwordEl.value : "";
-            if (!email || !password) {
-              showError("Enter your email and password.");
-              return;
-            }
-            setBusy(true);
-            A.signInWithEmailPassword(email, password)
-              .then(function () { clearError(); /* render() runs via auth-state change */ })
-              .catch(function (err) {
-                showError((err && err.message) ? err.message : "Sign-in failed.");
-              })
-              .then(function () { setBusy(false); });
-          });
-        }
-
-        if (googleBtn) {
-          googleBtn.addEventListener("click", function () {
-            clearError();
-            setBusy(true);
-            A.signInWithGoogle()
-              .then(function () { clearError(); })
-              .catch(function (err) {
-                showError((err && err.message) ? err.message : "Google sign-in failed.");
-              })
-              .then(function () { setBusy(false); });
-          });
-        }
-
-        if (signoutBtn) {
-          signoutBtn.addEventListener("click", function () {
-            A.signOut().catch(function () { /* nothing useful to show on sign-out error */ });
-          });
-        }
-      })();
-    </script>
-
-    <script>
-      // OSK-127: theme toggle + persistence. Identical to the other pages; kept separate
-      // from the guard logic above. The persisted theme is already applied pre-paint by
-      // the <head> script; here we wire the button and keep localStorage in sync.
+      // OSK-127: theme toggle + persistence. Identical to the other pages. The persisted
+      // theme is already applied pre-paint by the <head> script; here we wire the button
+      // and keep localStorage in sync.
       (function () {
         "use strict";
         var KEY = "osk-theme";
@@ -725,38 +641,26 @@
         if (!btn) { return; }
 
         function isSketch() { return root.getAttribute("data-theme") === "sketch"; }
-
         function sync() {
           btn.textContent = isSketch() ? "Theme: Sketch" : "Theme: Default";
           btn.setAttribute("aria-pressed", isSketch() ? "true" : "false");
         }
-
         function apply(theme) {
-          if (theme === "sketch") {
-            root.setAttribute("data-theme", "sketch");
-          } else {
-            root.removeAttribute("data-theme");
-          }
-          try {
-            localStorage.setItem(KEY, theme);
-          } catch (e) {
-            /* persistence unavailable — theme still applies for this session */
-          }
+          if (theme === "sketch") { root.setAttribute("data-theme", "sketch"); }
+          else { root.removeAttribute("data-theme"); }
+          try { localStorage.setItem(KEY, theme); }
+          catch (e) { /* persistence unavailable — theme still applies for this session */ }
           sync();
         }
-
-        btn.addEventListener("click", function () {
-          apply(isSketch() ? "default" : "sketch");
-        });
-
+        btn.addEventListener("click", function () { apply(isSketch() ? "default" : "sketch"); });
         sync();
       })();
     </script>
 
     <script>
-      // OSK-151 — site-wide alert banner. Identical block across index/status/ops/help/app.
-      // Reads window.__APP_CONFIG__.alert and, when active + in-window + not dismissed,
-      // reveals the fixed banner at the top. XSS-safe: message via textContent only.
+      // OSK-151 — site-wide alert banner. Identical block across index/status/ops/help/app/profile.
+      // Reads window.__APP_CONFIG__.alert and, when active + in-window + not dismissed, reveals
+      // the fixed banner at the top. XSS-safe: message via textContent only.
       (function () {
         "use strict";
 
@@ -774,7 +678,6 @@
           var t = Date.parse(v);
           return isNaN(t) ? null : t;
         }
-
         function inWindow(now, startsAt, endsAt) {
           var s = toTime(startsAt);
           var e = toTime(endsAt);
@@ -782,16 +685,12 @@
           if (e !== null && now > e) { return false; }
           return true;
         }
-
         function hashMessage(str) {
           var h = 5381;
-          for (var i = 0; i < str.length; i++) {
-            h = ((h << 5) + h) ^ str.charCodeAt(i);
-          }
+          for (var i = 0; i < str.length; i++) { h = ((h << 5) + h) ^ str.charCodeAt(i); }
           return (h >>> 0).toString(36);
         }
         function storageKey(message) { return STORAGE_PREFIX + hashMessage(message); }
-
         function isDismissed(message) {
           try { return localStorage.getItem(storageKey(message)) === "1"; }
           catch (e) { return false; }
@@ -800,7 +699,6 @@
           try { localStorage.setItem(storageKey(message), "1"); }
           catch (e) { /* storage blocked — dismissal only lasts this session */ }
         }
-
         function reserveSpace() {
           var body = document.body;
           body.style.paddingTop = "";
@@ -833,13 +731,5 @@
         });
       })();
     </script>
-    <!--
-      OSK-105: onboarding product tour — per-page coachmarks + a pausable, replayable
-      whole-site walkthrough. Self-contained: this ONE include injects its own themed
-      styles + a "?" launcher and holds its per-page step registry internally, so no
-      other page markup changes. Loads after config.js (in <head>) so it can read the
-      optional window.__APP_CONFIG__.tour block. Identical include across every page.
-    -->
-    <script src="/tour.js"></script>
   </body>
 </html>
