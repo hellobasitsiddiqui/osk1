@@ -187,6 +187,84 @@
       }
 
       /* ================================================================== *
+       * OSK-151 — site-wide, config-driven, dismissible alert banner.
+       * A full-width bar pinned to the very top of the viewport (position:
+       * fixed → edge-to-edge and independent of each page's own body layout:
+       * index is flex-centred, the others are normal flow). Hidden by default
+       * (the [hidden] attribute + config alert.active=false in web/config.js),
+       * so nothing shows until an alert is configured. The banner script at the
+       * foot of the page reveals it only when the alert is active, inside its
+       * optional time window, and not already dismissed for that exact message.
+       *
+       * Theming: every colour is a shared palette token, so the banner re-skins
+       * for the sketch theme automatically (paper fill + ink text + blueprint
+       * accent). The --panel/--warn/--down tokens are only defined on the DEFAULT
+       * palette of status/ops/help (and on every page's sketch theme), NOT on
+       * index's default palette — so each var() carries the same dark fallback
+       * those pages use, keeping the banner identical on all four pages. This
+       * whole block is identical across index/status/ops/help.
+       * ================================================================== */
+      .alert-banner {
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        z-index: 1000;
+        display: flex;
+        align-items: flex-start;
+        gap: 0.7rem;
+        padding: 0.75rem 1.15rem;
+        background: var(--panel, #161b22);
+        color: var(--fg);
+        border-bottom: 1px solid var(--border);
+        border-top: 4px solid var(--accent); /* severity accent (overridden below) */
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        font-size: 0.9rem;
+        line-height: 1.45;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+      }
+      /* [hidden] must win even though the base rule sets display:flex. */
+      .alert-banner[hidden] { display: none; }
+      /* Severity → top-accent + dot colour, from the shared status tokens. */
+      .alert-banner--info     { border-top-color: var(--accent); }
+      .alert-banner--warning  { border-top-color: var(--warn, #d29922); }
+      .alert-banner--critical { border-top-color: var(--down, #f85149); }
+      .alert-banner__dot {
+        width: 10px; height: 10px; border-radius: 50%;
+        flex: 0 0 auto; margin-top: 0.35rem; background: var(--accent);
+      }
+      .alert-banner--info     .alert-banner__dot { background: var(--accent); }
+      .alert-banner--warning  .alert-banner__dot { background: var(--warn, #d29922); }
+      .alert-banner--critical .alert-banner__dot { background: var(--down, #f85149); }
+      .alert-banner__msg {
+        flex: 1 1 auto; min-width: 0;
+        overflow-wrap: anywhere; /* long words / URLs wrap, never side-scroll */
+      }
+      /* Close (X): quiet, theme-token styled, comfortable tap target. */
+      .alert-banner__close {
+        flex: 0 0 auto;
+        font: inherit;
+        font-size: 1.25rem;
+        line-height: 1;
+        color: var(--muted);
+        background: transparent;
+        border: 0;
+        border-radius: 6px;
+        padding: 0.15rem 0.45rem;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      .alert-banner__close:hover { color: var(--fg); }
+      .alert-banner__close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      /* OSK-151 responsive: mirror the OSK-117 phone breakpoint — a touch less
+         padding and a slightly larger close target on narrow screens. */
+      @media (max-width: 640px) {
+        .alert-banner { padding: 0.7rem 0.9rem; font-size: 0.875rem; }
+        .alert-banner__close { font-size: 1.4rem; padding: 0.1rem 0.5rem; }
+      }
+
+      /* ================================================================== *
        * OSK-127 — selectable "sketch / blueprint" theme + its toggle.
        * Everything theme-specific is scoped under [data-theme="sketch"], so
        * the default dark theme above is left exactly as it was. The toggle
@@ -318,6 +396,21 @@
     </style>
   </head>
   <body>
+    <!--
+      OSK-151: site-wide alert banner mount. Rendered hidden by default (the
+      [hidden] attribute + config alert.active=false in web/config.js), so nothing
+      shows until an alert is configured. The banner script at the foot of the page
+      reveals it only when the alert is active, within its optional time window, and
+      not already dismissed for this exact message. Identical across the four pages.
+      role=alert + aria-live=assertive so assistive tech announces it on reveal; the
+      message is written with textContent only (XSS-safe).
+    -->
+    <aside id="site-alert" class="alert-banner" role="alert" aria-live="assertive" hidden>
+      <span class="alert-banner__dot" aria-hidden="true"></span>
+      <span class="alert-banner__msg" id="site-alert-msg"></span>
+      <button type="button" class="alert-banner__close" id="site-alert-close" aria-label="Dismiss this alert">&times;</button>
+    </aside>
+
     <main class="card">
       <div class="logo" aria-hidden="true">OS</div>
       <h1>OpenSkeleton</h1>
@@ -487,6 +580,119 @@
         });
 
         sync(); // correct the label for whatever the pre-paint script decided
+      })();
+    </script>
+
+    <script>
+      // OSK-151 — site-wide alert banner. Vanilla, dependency-free, fully
+      // self-contained (no network requests, no new deps). Reads
+      // window.__APP_CONFIG__.alert from config.js and, when appropriate, reveals
+      // the fixed banner at the top of the page. Identical block across the four
+      // pages, and kept separate from the existing build-stamp / health-poll /
+      // theme-toggle logic so it can't disturb them.
+      //
+      // Show rules (AC2): alert.active === true AND we are inside the optional
+      // [startsAt, endsAt] window (a null/absent bound = open-ended on that side)
+      // AND the user has not already dismissed THIS message (AC3 — keyed by a hash
+      // of the message text, so editing the message re-shows a NEW alert).
+      //
+      // XSS-safe (AC2): the message is written with textContent ONLY, never innerHTML.
+      (function () {
+        "use strict";
+
+        var cfg = (window.__APP_CONFIG__ || {}).alert || {};
+        var banner = document.getElementById("site-alert");
+        var msgEl = document.getElementById("site-alert-msg");
+        var closeBtn = document.getElementById("site-alert-close");
+        if (!banner || !msgEl || !closeBtn) { return; }
+
+        // Allowed severities; anything else falls back to "info".
+        var SEVERITIES = { info: true, warning: true, critical: true };
+        var STORAGE_PREFIX = "osk-alert-dismissed:";
+
+        // Parse an ISO-ish bound to epoch ms, or null if absent/invalid. An invalid
+        // bound is treated as "no bound" so a typo can't wedge the banner on or off.
+        function toTime(v) {
+          if (v == null) { return null; }
+          var t = Date.parse(v);
+          return isNaN(t) ? null : t;
+        }
+
+        // Is `now` within [startsAt, endsAt]? A null bound = open-ended that side.
+        function inWindow(now, startsAt, endsAt) {
+          var s = toTime(startsAt);
+          var e = toTime(endsAt);
+          if (s !== null && now < s) { return false; }
+          if (e !== null && now > e) { return false; }
+          return true;
+        }
+
+        // Small stable string hash (djb2-xor) -> unsigned base36. Keys the dismissal
+        // in localStorage by MESSAGE CONTENT, so editing the message yields a new key
+        // and the banner re-shows even if the previous one was dismissed. Not for
+        // security — just a compact, stable identity for the text.
+        function hashMessage(str) {
+          var h = 5381;
+          for (var i = 0; i < str.length; i++) {
+            h = ((h << 5) + h) ^ str.charCodeAt(i); // h * 33 XOR c
+          }
+          return (h >>> 0).toString(36);
+        }
+        function storageKey(message) { return STORAGE_PREFIX + hashMessage(message); }
+
+        // Dismissal read/write. Missing/blocked storage degrades to "not dismissed".
+        function isDismissed(message) {
+          try { return localStorage.getItem(storageKey(message)) === "1"; }
+          catch (e) { return false; }
+        }
+        function markDismissed(message) {
+          try { localStorage.setItem(storageKey(message), "1"); }
+          catch (e) { /* storage blocked — dismissal only lasts this session */ }
+        }
+
+        // Reserve top space so the FIXED banner never covers page content. We clear
+        // our own override first so getComputedStyle reports the stylesheet's top
+        // padding for the CURRENT breakpoint, then add the banner's rendered height
+        // back on. Re-run on resize because the message can wrap to a taller/shorter
+        // banner at a different width. The banner is position:fixed, so this padding
+        // change never feeds back into its own height.
+        function reserveSpace() {
+          var body = document.body;
+          body.style.paddingTop = "";
+          var base = parseFloat(getComputedStyle(body).paddingTop) || 0;
+          body.style.paddingTop = (base + banner.offsetHeight) + "px";
+        }
+        function releaseSpace() { document.body.style.paddingTop = ""; }
+
+        // Normalise config: message trimmed; severity validated.
+        var message = typeof cfg.message === "string" ? cfg.message.trim() : "";
+        var severity = SEVERITIES[cfg.severity] ? cfg.severity : "info";
+
+        // Show only when active, non-empty, in-window, and not already dismissed.
+        if (cfg.active !== true) { return; }
+        if (!message) { return; }
+        if (!inWindow(Date.now(), cfg.startsAt, cfg.endsAt)) { return; }
+        if (isDismissed(message)) { return; }
+
+        // Paint: severity class + message (textContent — XSS-safe), then reveal.
+        banner.classList.add("alert-banner--" + severity);
+        msgEl.textContent = message;
+        banner.hidden = false;
+
+        // Reserve layout space now the banner has real dimensions, and keep it
+        // correct across viewport resizes while the banner is showing.
+        reserveSpace();
+        var onResize = function () { if (!banner.hidden) { reserveSpace(); } };
+        window.addEventListener("resize", onResize);
+
+        // Dismiss: remember THIS message, hide, release the reserved space, and stop
+        // tracking resizes. A future NEW message hashes differently and re-shows.
+        closeBtn.addEventListener("click", function () {
+          markDismissed(message);
+          banner.hidden = true;
+          releaseSpace();
+          window.removeEventListener("resize", onResize);
+        });
       })();
     </script>
   </body>
