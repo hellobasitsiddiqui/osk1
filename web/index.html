@@ -107,6 +107,13 @@
       .status-link { margin-top: 0.9rem; font-size: 0.78rem; }
       .status-link a { color: var(--muted); text-decoration: none; }
       .status-link a:hover { color: var(--accent); text-decoration: underline; }
+      /* OSK-141: "A product of …" byline. Subtle secondary-text metadata, styled
+         like the status-link row so it sits quietly with the build stamp rather
+         than competing with the headline. Reads the shared vars, so it re-skins
+         for the sketch theme automatically. */
+      .byline { margin-top: 0.9rem; font-size: 0.78rem; color: var(--muted); }
+      .byline a { color: var(--muted); text-decoration: none; }
+      .byline a:hover { color: var(--accent); text-decoration: underline; }
 
       /* OSK-117: mobile-web polish. Phones in portrait (~360–430px wide) only —
          everything above is untouched, so the desktop card is preserved. */
@@ -116,9 +123,12 @@
         h1 { font-size: 1.6rem; }
         /* Long deploy SHAs / build ids must wrap, never force a sideways scroll. */
         .build { overflow-wrap: anywhere; }
-        /* Roomier, easier-to-tap footer links (status / ops) on touch screens. */
+        /* Roomier, easier-to-tap footer links (status / ops / help) on touch screens. */
         .status-link { font-size: 0.85rem; }
         .status-link a { display: inline-block; padding: 0.35rem 0.15rem; }
+        /* OSK-141: keep the byline legible + its link tappable on phones too. */
+        .byline { font-size: 0.85rem; }
+        .byline a { display: inline-block; padding: 0.35rem 0.15rem; }
       }
 
       /* ================================================================== *
@@ -266,12 +276,19 @@
 
       <!-- OSK-96: link to the public /status page (live health + outage banner).
            OSK-90: and, next to it, a discreet link to the ops panel (operator
-           jump-off page). Both are quiet metadata, styled the same. -->
+           jump-off page). OSK-144: and the user Help page. All quiet metadata,
+           styled the same. -->
       <p class="status-link">
         <a href="/status">Service status &rarr;</a>
         &nbsp;&middot;&nbsp;
         <a href="/ops">Ops panel &rarr;</a>
+        &nbsp;&middot;&nbsp;
+        <a href="/help">Help &rarr;</a>
       </p>
+
+      <!-- OSK-141: subtle "A product of …" byline. target=_blank + rel=noopener
+           per the ticket; the org URL is a placeholder for now. -->
+      <p class="byline">A product of <a href="https://openskeleton.dev" target="_blank" rel="noopener">OpenSkeleton</a></p>
 
       <!-- OSK-127: theme toggle. Small, quiet control; switches Default (dark)
            <-> Sketch (graph-paper) and persists the choice in localStorage. -->
