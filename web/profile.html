@@ -245,6 +245,42 @@
         letter-spacing: 0.06em; margin: 0 0 0.4rem;
       }
 
+      /* --- Avatar panel (OSK-83) ------------------------------------------- */
+      .avatar { display: flex; align-items: flex-start; gap: 1rem; margin: 0.25rem 0 1rem; }
+      /* Circular frame: a placeholder monogram sits behind, the preview <img> (absolutely
+         positioned to fill) covers it once a photo is shown. */
+      .avatar__frame {
+        position: relative;
+        width: 72px; height: 72px; flex: 0 0 auto;
+        border-radius: 50%;
+        background: #0d1117;
+        border: 1px solid var(--border);
+        display: flex; align-items: center; justify-content: center;
+        overflow: hidden;
+      }
+      .avatar__placeholder { color: var(--muted); font-weight: 700; font-size: 1.2rem; }
+      .avatar__img {
+        position: absolute; inset: 0;
+        width: 100%; height: 100%;
+        object-fit: cover; display: block;
+      }
+      .avatar__img[hidden] { display: none; }
+      .avatar__controls { flex: 1 1 auto; min-width: 0; }
+      /* The native file picker, kept legible on the dark surface. */
+      .avatar__file {
+        display: block; width: 100%; font: inherit; color: var(--fg);
+        margin-bottom: 0.6rem; font-size: 0.85rem;
+      }
+      .avatar__file::file-selector-button {
+        font: inherit; font-weight: 600; font-size: 0.82rem;
+        color: var(--fg); background: transparent;
+        border: 1px solid var(--border); border-radius: 8px;
+        padding: 0.4rem 0.8rem; margin-right: 0.6rem; cursor: pointer;
+      }
+      .avatar__file::file-selector-button:hover { border-color: var(--muted); }
+      /* An inline (auto-width) variant of the primary button, so "Upload photo" isn't full-width. */
+      .btn--inline { width: auto; }
+
       /* --- Footer (shared with app/ops/status/help) ------------------------ */
       .foot {
         display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
@@ -505,6 +541,37 @@
           /app view. Populated by web/badges.js (reads GET /api/v1/me). Hidden until rendered.
         -->
         <ul id="account-badges" class="acct-badges" aria-label="Account status" hidden></ul>
+
+        <!--
+          OSK-83: avatar upload. Pick an image, preview it, then Upload — the bytes go
+          STRAIGHT to Cloud Storage (your own users/{uid}/ area, owner-only per storage.rules)
+          via the Firebase Storage Web SDK (web/auth.js → OSKAuth.uploadAvatar); the backend
+          then reflects it as your Firebase photoURL (PUT /api/v1/me/avatar). The current
+          avatar is your live photoURL from GET /api/v1/me. Lives inside the signed-in region
+          so it is hidden until the guard reveals #profile-app. Content-type + size are checked
+          client-side here, re-checked by storage.rules on write, and again by the backend.
+        -->
+        <p class="form-section-label">Photo</p>
+        <div class="avatar">
+          <span class="avatar__frame">
+            <!-- Preview: hidden until a current/selected image sets its src (never innerHTML). -->
+            <img id="pf-avatar-img" class="avatar__img" alt="Your profile photo" hidden />
+            <span class="avatar__placeholder" aria-hidden="true">OS</span>
+          </span>
+          <div class="avatar__controls">
+            <input id="pf-avatar-file" class="avatar__file" type="file"
+                   accept="image/png,image/jpeg,image/webp,image/gif"
+                   aria-describedby="pf-avatar-error" />
+            <div class="form-actions" style="margin-top: 0">
+              <button id="pf-avatar-upload" class="btn btn--primary btn--inline" type="button" disabled>
+                Upload photo
+              </button>
+            </div>
+            <span class="field__hint">PNG, JPEG, WebP or GIF &middot; up to 5&nbsp;MB.</span>
+            <p id="pf-avatar-error" class="form-error" role="alert" hidden></p>
+            <p id="pf-avatar-success" class="form-success" role="status" aria-live="polite" hidden></p>
+          </div>
+        </div>
 
         <!--
           Loading / empty status line. Shown while GET /api/v1/me is in flight; also the

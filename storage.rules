@@ -10,11 +10,12 @@ rules_version = '2';
 // engine's default of DENY. No public read, no anonymous access, no wide-open
 // buckets.
 //
-// The single grant here is the per-user private area that the upcoming
-// avatar-upload feature (OSK-83) will use: a signed-in user may read and write
-// ONLY objects under their own `/users/{uid}/**` prefix. This is a deliberately
-// conservative baseline — tighten later (size/content-type limits) when OSK-83
-// lands; never loosen it to public.
+// The single grant here is the per-user private area the avatar-upload feature
+// (OSK-83) uses: a signed-in user may read/delete ONLY objects under their own
+// `/users/{uid}/**` prefix, and may WRITE (create/update) only IMAGES up to 5 MiB
+// there. OSK-83 has now landed, so this fulfils the "tighten later (size/content-type
+// limits)" note that OSK-106 left here — the write grant is constrained rather than
+// left wide-open. Never loosen it to public.
 //
 // Deployed by CD (best-effort) from .github/workflows/hosting-deploy.yml on
 // merge to `main`. Publishing requires the deploy SA (gha-deployer) to hold
@@ -29,13 +30,30 @@ service firebase.storage {
       allow read, write: if false;
     }
 
-    // Per-user private area (basis for OSK-83 avatar uploads). A request is
-    // allowed only when the caller is authenticated (`request.auth != null`) AND
-    // the `{uid}` path segment equals their own uid — so a user can never read
-    // or write another user's objects.
+    // Per-user private area — the home of OSK-83 avatar uploads. Every grant below
+    // first requires the caller to be authenticated (`request.auth != null`) AND the
+    // `{uid}` path segment to equal their own uid, so a user can never touch another
+    // user's objects. The write grant additionally constrains the incoming object to an
+    // image within the size ceiling (the avatar limits), split from delete because a
+    // delete carries no `request.resource` to size/type-check.
     match /users/{uid}/{allPaths=**} {
-      allow read, write: if request.auth != null
-                         && request.auth.uid == uid;
+      // Owner may READ any of their own objects.
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      // Owner may CREATE/UPDATE their own objects, but ONLY images up to 5 MiB. On a
+      // create/update `request.resource` is the incoming object, so its size and
+      // contentType are checked here — the hard, storage-side enforcement that the
+      // client-side picker (web/profile.js) and the backend (AvatarObject) mirror. Keep
+      // the `image/(…)` list in sync with those two. (`image/jpeg` covers .jpg + .jpeg.)
+      allow create, update: if request.auth != null
+                            && request.auth.uid == uid
+                            && request.resource != null
+                            && request.resource.size < 5 * 1024 * 1024
+                            && request.resource.contentType.matches('image/(png|jpeg|webp|gif)');
+
+      // Owner may DELETE their own objects (e.g. replacing an old avatar). On a delete
+      // `request.resource` is null, so the size/type checks above cannot — and need not — apply.
+      allow delete: if request.auth != null && request.auth.uid == uid;
     }
   }
 }

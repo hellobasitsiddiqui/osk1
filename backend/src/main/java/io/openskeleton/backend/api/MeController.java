@@ -5,6 +5,9 @@ import io.openskeleton.backend.account.FirebaseAccountState;
 import io.openskeleton.backend.audit.AuditEvent;
 import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.auth.FirebaseAuthenticationFilter;
+import io.openskeleton.backend.avatar.AvatarService;
+import io.openskeleton.backend.avatar.AvatarUnavailableException;
+import io.openskeleton.backend.avatar.InvalidAvatarException;
 import io.openskeleton.backend.common.PagedResponse;
 import io.openskeleton.backend.user.LifecycleUpdate;
 import io.openskeleton.backend.user.NotificationPreference;
@@ -18,14 +21,22 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import java.time.Instant;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -63,12 +74,17 @@ public class MeController {
     private final UserService userService;
     private final AuditService auditService;
     private final FirebaseAccountService firebaseAccountService;
+    private final AvatarService avatarService;
 
     public MeController(
-            UserService userService, AuditService auditService, FirebaseAccountService firebaseAccountService) {
+            UserService userService,
+            AuditService auditService,
+            FirebaseAccountService firebaseAccountService,
+            AvatarService avatarService) {
         this.userService = userService;
         this.auditService = auditService;
         this.firebaseAccountService = firebaseAccountService;
+        this.avatarService = avatarService;
     }
 
     /**
@@ -215,6 +231,25 @@ public class MeController {
     }
 
     /**
+     * Request body for {@code PUT /api/v1/me/avatar}: the reference to an avatar image the caller has
+     * ALREADY uploaded to Cloud Storage under their own {@code users/{uid}/…} area (OSK-83). Identity
+     * still comes only from the verified token — the body carries no uid — so the object path is
+     * re-validated server-side to belong to the caller ({@link AvatarService}).
+     *
+     * <p><b>Why the backend takes a reference, not the bytes.</b> The image is uploaded directly by the
+     * browser to Cloud Storage via the Firebase Storage Web SDK (authorised by the caller's ID token
+     * against {@code storage.rules}); the bytes never transit this backend. The client then passes back
+     * the two facts the backend needs to reflect the upload as the user's {@code photoURL}: WHERE the
+     * object lives ({@code objectPath}) and its {@code getDownloadURL()} result ({@code downloadUrl}).
+     *
+     * @param objectPath the storage object path the client uploaded to, e.g.
+     *     {@code users/<uid>/avatar/1720000000000.png} (non-blank; validated to be under the caller's own area)
+     * @param downloadUrl the tokenised Firebase Storage download URL for that object (non-blank; validated
+     *     to reference our bucket and the same object path)
+     */
+    public record SetAvatarRequest(@NotBlank String objectPath, @NotBlank String downloadUrl) {}
+
+    /**
      * {@code GET /api/v1/me} — return the caller's PERSISTED profile, provisioning the
      * {@code users} row just-in-time on the first authenticated request (OSK-76).
      *
@@ -279,6 +314,66 @@ public class MeController {
         // Mirror GET /me: return the same shape including the live Firebase-owned account state.
         FirebaseAccountState accountState = firebaseAccountService.stateFor(uid);
         return toCurrentUser(updated, accountState);
+    }
+
+    /**
+     * {@code PUT /api/v1/me/avatar} — reflect an avatar the caller has already uploaded to Cloud
+     * Storage as their Firebase {@code photoURL}, and return the updated, persisted profile (OSK-83).
+     *
+     * <p>The image bytes were uploaded client-side straight to Storage under the caller's own
+     * {@code users/{uid}/…} prefix (the Firebase Storage Web SDK, authorised by the ID token against
+     * {@code storage.rules}); this endpoint receives only the object reference. {@link AvatarService}
+     * re-validates that reference server-side (ownership + image type + URL binding) and, when valid,
+     * sets the Firebase user's {@code photoURL} via the Admin SDK. Because the {@link CurrentUser} we
+     * return reads {@code photoUrl} LIVE from Firebase (OSK-73), the response already reflects the new
+     * avatar — there is no stored column to keep in sync (no migration needed).
+     *
+     * <p><b>Idempotent PUT.</b> Setting the same avatar twice yields the same {@code photoURL}, so PUT
+     * (not POST) is the honest verb. Identity is derived only from the verified token; we provision
+     * first (idempotent) so a caller can set an avatar even before ever calling {@code GET /me}.
+     *
+     * <p>Validation failure → 400; Firebase/Admin unavailable → 503 (see the local handlers below).
+     */
+    @PutMapping("/me/avatar")
+    public CurrentUser updateAvatar(HttpServletRequest request, @Valid @RequestBody SetAvatarRequest body) {
+        String uid = (String) request.getAttribute(FirebaseAuthenticationFilter.UID_ATTRIBUTE);
+        String email = (String) request.getAttribute(FirebaseAuthenticationFilter.EMAIL_ATTRIBUTE);
+        // Ensure the persisted row exists (identity from the token only), then set the avatar. The
+        // returned User row is unchanged by the avatar (photoUrl is Firebase-owned), so it is safe to
+        // reuse it for the response — only the live Firebase state below reflects the new photoURL.
+        User user = userService.provisionFromToken(uid, email);
+        avatarService.updateAvatar(uid, body.objectPath(), body.downloadUrl());
+        // Mirror GET /me: the live Firebase-owned account state now carries the just-set photoURL.
+        FirebaseAccountState accountState = firebaseAccountService.stateFor(uid);
+        return toCurrentUser(user, accountState);
+    }
+
+    /**
+     * Avatar reference failed server-side validation (bad ownership/type/URL) → RFC 7807 {@code 400}.
+     * Handled locally (like {@code EmailVerificationController}) to keep this feature self-contained;
+     * the message is safe to surface (it names which invariant failed, never attacker-controlled data).
+     */
+    @ExceptionHandler(InvalidAvatarException.class)
+    ProblemDetail handleInvalidAvatar(InvalidAvatarException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        problem.setTitle("Bad Request");
+        return problem;
+    }
+
+    /**
+     * Firebase Admin unavailable (no ADC / Storage not yet enabled — OSK-95 — or a failed Admin call)
+     * → degraded RFC 7807 {@code 503} with a {@code Retry-After} hint, matching the email-verification
+     * resend degradation (OSK-77). A write must fail loudly so the client knows to retry.
+     */
+    @ExceptionHandler(AvatarUnavailableException.class)
+    ResponseEntity<ProblemDetail> handleAvatarUnavailable(AvatarUnavailableException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "Avatar updates are temporarily unavailable. Please retry shortly.");
+        problem.setTitle("Service Unavailable");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, "5")
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .body(problem);
     }
 
     /**
