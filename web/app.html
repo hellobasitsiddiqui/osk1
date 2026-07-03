@@ -871,5 +871,15 @@
       other first-login gates (intended order: terms -> profile-completion -> onboarding).
     -->
     <script src="/terms.js"></script>
+    <!--
+      OSK-136: first-login profile-completion gate. Self-contained: this ONE include
+      injects its own themed overlay + styles and reads GET /api/v1/me on sign-in. If a
+      required field (name / location / age) is missing it BLOCKS app entry with a minimal
+      form that PATCHes only the entered fields, then dismisses on success. Delegates auth
+      to window.OSKAuth (loaded in <head>); reads the optional
+      window.__APP_CONFIG__.completionGate block. Composes with the sibling first-run
+      gates (terms → profile-completion → onboarding) — independent + idempotent.
+    -->
+    <script src="/completion-gate.js"></script>
   </body>
 </html>
