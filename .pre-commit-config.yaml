@@ -1,7 +1,21 @@
-# Pre-commit hooks (OSK-49). Install once: `pip install pre-commit && pre-commit install`.
+# Pre-commit hooks (OSK-49 style + OSK-56 secret gate).
+#
+# Install once per clone: `pip install pre-commit && pre-commit install`.
+# NOTE for git worktrees: all worktrees of a repo SHARE the same `.git/hooks`
+# (hooks live on the common .git dir, not per-worktree), so running
+# `pre-commit install` in ANY one worktree installs the hook for ALL of them —
+# you do NOT (and should not) re-run it in every worktree.
+#
 # These run on staged files before every commit and block on violations, catching
-# style issues locally before they reach CI — which enforces the SAME Spotless rule
-# via `./mvnw verify` (OSK-12), so hooks and CI can never disagree.
+# issues locally before they reach CI:
+#   * style — the SAME Spotless rule CI enforces via `./mvnw verify` (OSK-12), so
+#     hooks and CI can never disagree; and
+#   * secrets — the gitleaks hook (OSK-56) scans the staged diff and BLOCKS the
+#     commit if it finds a hard-coded credential, so a real secret is stopped
+#     BEFORE it ever leaves the machine. It reads the repo's `.gitleaks.toml`
+#     (default ruleset + a tightly-scoped allowlist for the known-public Firebase
+#     web config), the SAME config the CI backstop uses — so local and CI agree
+#     here too.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -12,6 +26,15 @@ repos:
       - id: check-added-large-files
       - id: mixed-line-ending
         args: [--fix=lf]
+  # Secret scanning (OSK-56): catch hard-coded credentials at `git commit` time,
+  # before they can leave the machine. Pinned to a gitleaks release tag; the hook
+  # auto-loads the repo-root `.gitleaks.toml` (default rules + the Firebase
+  # public-config allowlist). Same engine + config as the CI backstop
+  # (.github/workflows/gitleaks.yml), so a commit that passes locally passes CI.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
   - repo: local
     hooks:
       # Authoritative Java formatting — same Spotless config the build/CI use.

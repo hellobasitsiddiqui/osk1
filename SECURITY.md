@@ -88,12 +88,26 @@ JSON, `*.pem`, `*.p12`, env files). If you ever find a committed secret, treat i
 as a vulnerability and report it privately using the process above so it can be
 rotated and purged.
 
-Two automated layers guard this: **GitHub secret scanning + push protection**
-(enabled on the repo — push protection rejects a recognised secret before it can
-be committed, and secret scanning alerts on anything that reaches `main`), plus a
-**Gitleaks CI backstop** on every pull request (`.github/workflows/gitleaks.yml`)
-that catches generic/high-entropy patterns the native scanner may miss. The
-Gitleaks job is advisory (non-blocking); push protection is the hard gate.
+Three automated layers guard this:
+
+1. **A local Gitleaks pre-commit hook** (`.pre-commit-config.yaml`, OSK-56) —
+   scans the staged diff on `git commit` and **blocks the commit** if it finds a
+   credential, so a real secret is stopped *before it ever leaves the machine*.
+   Enable it once per clone with `pre-commit install` (see the bring-up runbook;
+   git worktrees share one `.git/hooks`, so a single install covers them all).
+2. **GitHub secret scanning + push protection** (enabled on the repo) — push
+   protection rejects a recognised secret at push time, and secret scanning
+   alerts on anything that reaches `main`.
+3. **A blocking Gitleaks CI backstop** on every pull request
+   (`.github/workflows/gitleaks.yml`, OSK-56) — catches generic/high-entropy
+   patterns the native scanner may miss and now **fails the PR** on a finding,
+   for anyone who has not installed the local hook.
+
+All three read the same `.gitleaks.toml` where relevant: it uses the default
+ruleset plus one tightly-scoped allowlist for the **public** Firebase Web client
+config in `web/config.js` (a client identifier, not a secret — access is enforced
+by Firebase Auth + backend token verification). The allowlist is narrow (path +
+exact literal), so it cannot mask a real, different secret.
 
 ### Handling a flagged or leaked secret
 
