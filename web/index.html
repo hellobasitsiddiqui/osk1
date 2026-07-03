@@ -559,50 +559,16 @@
       })();
     </script>
 
-    <script>
-      // OSK-127: theme toggle + persistence. Vanilla, dependency-free, and kept
-      // fully separate from the page's existing logic (build stamp above is
-      // untouched). The persisted theme is already applied pre-paint by the
-      // <head> script; here we wire the button and keep localStorage in sync.
-      // XSS-safe: only textContent + a fixed attribute value are ever written —
-      // no innerHTML, no untrusted data.
-      (function () {
-        "use strict";
-        var KEY = "osk-theme";
-        var root = document.documentElement;
-        var btn = document.getElementById("theme-toggle");
-        if (!btn) { return; }
-
-        function isSketch() { return root.getAttribute("data-theme") === "sketch"; }
-
-        // Reflect the active theme in the button label + pressed state.
-        function sync() {
-          btn.textContent = isSketch() ? "Theme: Sketch" : "Theme: Default";
-          btn.setAttribute("aria-pressed", isSketch() ? "true" : "false");
-        }
-
-        // Apply a theme, persist it, and refresh the button.
-        function apply(theme) {
-          if (theme === "sketch") {
-            root.setAttribute("data-theme", "sketch");
-          } else {
-            root.removeAttribute("data-theme");
-          }
-          try {
-            localStorage.setItem(KEY, theme);
-          } catch (e) {
-            /* persistence unavailable — theme still applies for this session */
-          }
-          sync();
-        }
-
-        btn.addEventListener("click", function () {
-          apply(isSketch() ? "default" : "sketch");
-        });
-
-        sync(); // correct the label for whatever the pre-paint script decided
-      })();
-    </script>
+    <!--
+      OSK-171: shared, config-driven in-app theme switcher. REPLACES the per-page
+      inline OSK-127 toggle script (the logic is now unified in ONE module, not
+      copy-pasted per page). It drives the existing footer #theme-toggle button AND
+      mounts a discoverable, mobile-friendly floating switcher, so the theme can be
+      changed without scrolling to the footer — including inside the Capacitor
+      Android WebView (OSK-146). Persists to localStorage["osk-theme"] and coexists
+      with the <head> pre-paint script. Identical include across every page.
+    -->
+    <script src="/theme-switcher.js"></script>
 
     <script>
       // OSK-151 — site-wide alert banner. Vanilla, dependency-free, fully

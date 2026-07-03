@@ -114,6 +114,31 @@ window.__APP_CONFIG__ = {
     requiredFields: ["firstName", "city", "age"],
   },
 
+  // OSK-171: in-app theme switcher (web/theme-switcher.js). OPTIONAL — the module
+  // ships with safe defaults and works with this block ABSENT, so it exists only to
+  // give an operator runtime control without a code change. Read via
+  // window.__APP_CONFIG__.theme on every page. Coexists with the <head> pre-paint
+  // theme script (OSK-110/127) and persists to localStorage["osk-theme"].
+  //
+  //   switcher — master on/off for the always-present FLOATING theme control that
+  //              makes the theme reachable WITHOUT scrolling to the footer — the fix
+  //              for "no way to change theme on mobile / in the Capacitor Android
+  //              WebView" (OSK-146). false = hide the floating control (the footer
+  //              "Theme: …" button still works where a page has one). Defaults true.
+  //   themes   — ordered REGISTRY the controls cycle through; each is { id, label }.
+  //              The FIRST entry MUST be the base "default" theme (represented by the
+  //              ABSENCE of a data-theme attribute on <html>); every other id maps to
+  //              a `[data-theme="<id>"]` CSS block on the pages. Adding a theme is:
+  //              add its CSS + add { id, label } here — no code change. Omit the whole
+  //              block to inherit the built-in default+sketch list.
+  theme: {
+    switcher: true,
+    themes: [
+      { id: "default", label: "Default" },
+      { id: "sketch", label: "Sketch" },
+    ],
+  },
+
   // OSK-74: Firebase Web App config for the web auth guard (web/auth.js). auth.js
   // reads this at runtime to initialise the Firebase JS SDK and gate the protected
   // /app page (sign-in with email/password or Google, then call /api/v1/me).
