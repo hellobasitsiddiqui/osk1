@@ -36,8 +36,9 @@ Key coordinates (from `../capacitor.config.ts` and the generated project):
 
 ## Build / run locally
 
-Prerequisites: **Node ≥ 22** (the Capacitor 8 CLI aborts on Node 20), **JDK 17+**
-(JDK 21 is fine), and the **Android SDK** (platform 36 + build-tools 35.0.0),
+Prerequisites: **Node ≥ 22** (the Capacitor 8 CLI aborts on Node 20), **JDK 21**
+(Capacitor 8's `capacitor-android` library compiles with `--release 21`, so
+JDK 17 fails), and the **Android SDK** (platform 36 + build-tools 35.0.0),
 easiest via [Android Studio](https://developer.android.com/studio).
 
 ```bash
@@ -67,7 +68,7 @@ APK keeps serving the previously copied assets.
 `.github/workflows/android.yml` is **path-gated** — it runs only when the mobile
 scaffold changes (`android/**`, `capacitor.config.ts`, `package.json`,
 `package-lock.json`, the workflow itself) so unrelated PRs never pay for the slow
-Android runner. It installs JDK 17 + Node 22 + the Android SDK, then runs
+Android runner. It installs JDK 21 + Node 22 + the Android SDK, then runs
 `npm ci` → `npx cap sync android` → `./gradlew assembleDebug` as a compile check,
 and uploads the resulting unsigned debug APK as a run artifact. No signing
 happens.

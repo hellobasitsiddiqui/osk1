@@ -1,6 +1,6 @@
 # android.yml — Android (Capacitor) compile check for the mobile shell (OSK-146).
 #
-# WHAT: When the mobile scaffold changes, this workflow installs JDK 17 + Node 22
+# WHAT: When the mobile scaffold changes, this workflow installs JDK 21 + Node 22
 #       + the Android SDK on an ubuntu runner, then runs
 #         npm ci  ->  npx cap sync android  ->  ./gradlew assembleDebug
 #       to prove the native Android project still compiles into a debug APK. It
@@ -77,14 +77,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      # JDK 17 — the minimum for the Android Gradle Plugin 8.x used by
-      # Capacitor 8. (The backend CI uses 21; the Android toolchain only needs
-      # 17, so pin the lower floor here.)
-      - name: Set up JDK 17 (Temurin)
+      # JDK 21 — required by Capacitor 8: its `capacitor-android` library is
+      # compiled with `--release 21`, so a JDK 17 toolchain fails with
+      # "invalid source release: 21". 21 also matches the backend CI (ci.yml).
+      - name: Set up JDK 21 (Temurin)
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       # Node 22 — the Capacitor 8 CLI aborts on Node 20, so pin the >=22 floor.
       - name: Set up Node 22
