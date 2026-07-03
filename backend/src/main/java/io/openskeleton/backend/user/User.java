@@ -9,6 +9,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import java.util.UUID;
 import org.hibernate.annotations.SQLRestriction;
 
@@ -151,6 +152,48 @@ public class User extends BaseEntity {
     @Column(name = "locale")
     private String locale;
 
+    // ---------------------------------------------------------------------------------
+    // Account-lifecycle fields (OSK-69). State a caller records on themselves through the
+    // /me surface (mark onboarding complete, accept terms, mark age-verified). The two
+    // booleans are NOT NULL (every row has a well-defined state, defaulting false); the
+    // terms pair is NULLABLE (unset until the first acceptance). Each column pairs with V8;
+    // Hibernate runs in `validate` mode, so the types/nullability MUST match the migration.
+    // ---------------------------------------------------------------------------------
+
+    /**
+     * Whether the caller has completed the first-run onboarding flow. Defaults to
+     * {@code false} so a freshly JIT-provisioned user (OSK-76) starts "not onboarded"
+     * until the client marks it complete via {@code PATCH /api/v1/me/lifecycle}. NOT NULL,
+     * mirroring the {@code enabled} boolean.
+     */
+    @Column(name = "onboarding_completed", nullable = false)
+    private boolean onboardingCompleted = false;
+
+    /**
+     * The version string of the terms/policy the user accepted (free text, e.g. {@code v1.0}),
+     * or {@code null} if they have never accepted any terms. Set together with
+     * {@link #termsAcceptedAt} whenever terms are accepted; the version is the meaningful,
+     * queryable record of <i>what</i> was accepted.
+     */
+    @Column(name = "terms_accepted_version")
+    private String termsAcceptedVersion;
+
+    /**
+     * When the terms acceptance was recorded, as a <b>server</b> timestamp (never
+     * client-supplied), or {@code null} until the first acceptance. Stored as
+     * {@code timestamptz} to match this {@link Instant} mapping, like the {@code BaseEntity}
+     * timestamps.
+     */
+    @Column(name = "terms_accepted_at")
+    private Instant termsAcceptedAt;
+
+    /**
+     * Whether the caller's age has been verified. Defaults to {@code false} and is NOT NULL,
+     * same shape as {@link #onboardingCompleted}; set via {@code PATCH /api/v1/me/lifecycle}.
+     */
+    @Column(name = "age_verified", nullable = false)
+    private boolean ageVerified = false;
+
     /** No-arg constructor required by JPA/Hibernate. */
     public User() {}
 
@@ -284,5 +327,37 @@ public class User extends BaseEntity {
 
     public void setLocale(String locale) {
         this.locale = locale;
+    }
+
+    public boolean isOnboardingCompleted() {
+        return onboardingCompleted;
+    }
+
+    public void setOnboardingCompleted(boolean onboardingCompleted) {
+        this.onboardingCompleted = onboardingCompleted;
+    }
+
+    public String getTermsAcceptedVersion() {
+        return termsAcceptedVersion;
+    }
+
+    public void setTermsAcceptedVersion(String termsAcceptedVersion) {
+        this.termsAcceptedVersion = termsAcceptedVersion;
+    }
+
+    public Instant getTermsAcceptedAt() {
+        return termsAcceptedAt;
+    }
+
+    public void setTermsAcceptedAt(Instant termsAcceptedAt) {
+        this.termsAcceptedAt = termsAcceptedAt;
+    }
+
+    public boolean isAgeVerified() {
+        return ageVerified;
+    }
+
+    public void setAgeVerified(boolean ageVerified) {
+        this.ageVerified = ageVerified;
     }
 }

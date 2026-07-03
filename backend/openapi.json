@@ -49,6 +49,9 @@
             "format" : "int32",
             "type" : "integer"
           },
+          "ageVerified" : {
+            "type" : "boolean"
+          },
           "city" : {
             "type" : "string"
           },
@@ -71,10 +74,20 @@
             "enum" : [ "EMAIL", "PUSH", "NONE" ],
             "type" : "string"
           },
+          "onboardingCompleted" : {
+            "type" : "boolean"
+          },
           "phone" : {
             "type" : "string"
           },
           "role" : {
+            "type" : "string"
+          },
+          "termsAcceptedAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "termsAcceptedVersion" : {
             "type" : "string"
           },
           "timezone" : {
@@ -263,6 +276,21 @@
           }
         },
         "required" : [ "enabled" ],
+        "type" : "object"
+      },
+      "UpdateLifecycleRequest" : {
+        "properties" : {
+          "ageVerified" : {
+            "type" : "boolean"
+          },
+          "onboardingCompleted" : {
+            "type" : "boolean"
+          },
+          "termsAcceptedVersion" : {
+            "pattern" : ".*\\S.*",
+            "type" : "string"
+          }
+        },
         "type" : "object"
       },
       "UpdateProfileRequest" : {
@@ -678,6 +706,34 @@
               "*/*" : {
                 "schema" : {
                   "$ref" : "#/components/schemas/PagedResponseProfileChange"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "me-controller" ]
+      }
+    },
+    "/api/v1/me/lifecycle" : {
+      "patch" : {
+        "operationId" : "updateLifecycle",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/UpdateLifecycleRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CurrentUser"
                 }
               }
             },

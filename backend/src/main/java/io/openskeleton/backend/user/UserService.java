@@ -2,6 +2,7 @@ package io.openskeleton.backend.user;
 
 import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.web.NotFoundException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -204,6 +205,83 @@ public class UserService {
         applyIfChanged(edits, ProfileChange.FIELD_LOCALE, update.locale(), user::getLocale, user::setLocale);
 
         // Nothing genuinely changed → no write and no history (idempotent PATCH is a no-op).
+        if (edits.isEmpty()) {
+            return user;
+        }
+
+        User saved = userRepository.save(user);
+        String targetId = saved.getId().toString();
+        for (FieldEdit edit : edits) {
+            auditService.record(
+                    firebaseUid,
+                    ProfileChange.ACTION,
+                    ProfileChange.TARGET_TYPE,
+                    targetId,
+                    ProfileChange.metadata(edit.field(), edit.oldValue(), edit.newValue()));
+        }
+        return saved;
+    }
+
+    /**
+     * Apply the caller's account-lifecycle transitions to their persisted user (OSK-69):
+     * mark onboarding complete, accept a terms version, mark age-verified. Identity fields and
+     * the profile fields are untouched here — this method owns only the lifecycle state added by
+     * {@code V8}.
+     *
+     * <p><b>Sparse (partial) update</b>, exactly like {@link #updateProfile}: a {@code null}
+     * component in {@link LifecycleUpdate} means "leave unchanged"; a field is written only when
+     * the requested value genuinely differs (an idempotent re-submit is a no-op — no UPDATE, no
+     * history). Runs in a single transaction so the write and its history rows commit atomically
+     * and carry the {@code @Version} optimistic-lock check inherited from {@code BaseEntity}.
+     *
+     * <p><b>Terms acceptance stamps a server timestamp.</b> When a new (different) terms version
+     * is accepted, {@code termsAcceptedAt} is set to {@link Instant#now()} in the SAME write —
+     * the timestamp is authoritative server state, never taken from the request. Re-accepting the
+     * <i>same</i> version is a no-op (no new timestamp, no history), matching the idempotent-PATCH
+     * convention. Only the version change is recorded to history (the timestamp is derived state).
+     *
+     * <p><b>Change history (OSK-99 reuse).</b> Each genuinely changed field appends its own
+     * {@code PROFILE_UPDATED} event through {@link AuditService#record} — the same shape and feed
+     * {@code GET /api/v1/me/history} reads — so lifecycle changes appear in history alongside the
+     * profile edits.
+     *
+     * @param firebaseUid the verified uid identifying which user to update
+     * @param update the requested lifecycle changes (null components are left unchanged)
+     * @return the updated, persisted user (or the unchanged user when nothing changed)
+     * @throws NotFoundException if no active user exists for the uid
+     */
+    @Transactional
+    public User updateLifecycle(String firebaseUid, LifecycleUpdate update) {
+        User user = userRepository
+                .findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new NotFoundException("No active user with firebaseUid " + firebaseUid));
+
+        List<FieldEdit> edits = new ArrayList<>();
+        // The two booleans are plain value copies, so the shared helper applies them uniformly.
+        applyIfChanged(
+                edits,
+                ProfileChange.FIELD_ONBOARDING_COMPLETED,
+                update.onboardingCompleted(),
+                user::isOnboardingCompleted,
+                user::setOnboardingCompleted);
+        // Terms acceptance is special: recording a new version also stamps a SERVER timestamp
+        // (never client-supplied), so it can't go through the plain value-copy helper. Only a
+        // genuinely different version writes — re-accepting the same version is a no-op.
+        String requestedTermsVersion = update.termsAcceptedVersion();
+        if (requestedTermsVersion != null && !Objects.equals(user.getTermsAcceptedVersion(), requestedTermsVersion)) {
+            String oldVersion = user.getTermsAcceptedVersion();
+            user.setTermsAcceptedVersion(requestedTermsVersion);
+            user.setTermsAcceptedAt(Instant.now());
+            edits.add(new FieldEdit(ProfileChange.FIELD_TERMS_ACCEPTED_VERSION, oldVersion, requestedTermsVersion));
+        }
+        applyIfChanged(
+                edits,
+                ProfileChange.FIELD_AGE_VERIFIED,
+                update.ageVerified(),
+                user::isAgeVerified,
+                user::setAgeVerified);
+
+        // Nothing genuinely changed → no write and no history (idempotent request is a no-op).
         if (edits.isEmpty()) {
             return user;
         }

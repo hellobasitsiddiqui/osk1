@@ -4,6 +4,7 @@ import io.openskeleton.backend.audit.AuditEvent;
 import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.auth.FirebaseAuthenticationFilter;
 import io.openskeleton.backend.common.PagedResponse;
+import io.openskeleton.backend.user.LifecycleUpdate;
 import io.openskeleton.backend.user.NotificationPreference;
 import io.openskeleton.backend.user.ProfileChange;
 import io.openskeleton.backend.user.ProfileUpdate;
@@ -16,6 +17,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Pattern;
+import java.time.Instant;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -84,6 +86,10 @@ public class MeController {
      * @param notificationPreference the caller's notification channel (never {@code null}; defaults EMAIL)
      * @param timezone the caller's IANA timezone id, or {@code null}
      * @param locale the caller's BCP-47 locale tag, or {@code null}
+     * @param onboardingCompleted whether the caller finished onboarding (never {@code null}; defaults false)
+     * @param termsAcceptedVersion the terms version the caller accepted, or {@code null} if none yet
+     * @param termsAcceptedAt when the caller accepted terms (server timestamp), or {@code null} if none yet
+     * @param ageVerified whether the caller's age has been verified (never {@code null}; defaults false)
      */
     public record CurrentUser(
             String uid,
@@ -97,7 +103,11 @@ public class MeController {
             String phone,
             NotificationPreference notificationPreference,
             String timezone,
-            String locale) {}
+            String locale,
+            boolean onboardingCompleted,
+            String termsAcceptedVersion,
+            Instant termsAcceptedAt,
+            boolean ageVerified) {}
 
     /**
      * Request body for {@code PATCH /api/v1/me}: the fields a caller may change on their own
@@ -148,6 +158,36 @@ public class MeController {
     }
 
     /**
+     * Request body for {@code PATCH /api/v1/me/lifecycle}: the account-lifecycle transitions a
+     * caller may apply to their own profile (OSK-69) — mark onboarding complete, accept a terms
+     * version, mark age-verified. Identity/authorization are still derived from the verified
+     * token, never the body.
+     *
+     * <p><b>Sparse PATCH</b> (mirrors {@link UpdateProfileRequest}): every field is optional and a
+     * field absent from (or {@code null} in) the JSON leaves that state unchanged, so a request
+     * that only marks onboarding complete never disturbs the terms or age-verified state.
+     *
+     * <p><b>Terms acceptance.</b> {@code termsAcceptedVersion} is the version being accepted; when
+     * present it must be non-blank (a violation becomes a 400 {@code problem+json}), and the
+     * accompanying acceptance <i>timestamp</i> is stamped server-side by the service — it is never
+     * accepted from the body, so there is no timestamp field here.
+     *
+     * @param onboardingCompleted the desired onboarding-complete flag, or {@code null} to leave unchanged
+     * @param termsAcceptedVersion the terms version to accept (non-blank), or {@code null} to leave unchanged
+     * @param ageVerified the desired age-verified flag, or {@code null} to leave unchanged
+     */
+    public record UpdateLifecycleRequest(
+            Boolean onboardingCompleted,
+            @Pattern(regexp = ".*\\S.*", message = "must not be blank") String termsAcceptedVersion,
+            Boolean ageVerified) {
+
+        /** Map this API request to the domain-level {@link LifecycleUpdate} the service consumes. */
+        LifecycleUpdate toLifecycleUpdate() {
+            return new LifecycleUpdate(onboardingCompleted, termsAcceptedVersion, ageVerified);
+        }
+    }
+
+    /**
      * {@code GET /api/v1/me} — return the caller's PERSISTED profile, provisioning the
      * {@code users} row just-in-time on the first authenticated request (OSK-76).
      *
@@ -181,6 +221,29 @@ public class MeController {
         // only); then apply the client-supplied field changes (sparse — see ProfileUpdate).
         userService.provisionFromToken(uid, email);
         User updated = userService.updateProfile(uid, body.toProfileUpdate());
+        return toCurrentUser(updated);
+    }
+
+    /**
+     * {@code PATCH /api/v1/me/lifecycle} — apply the caller's account-lifecycle transitions
+     * (OSK-69): mark onboarding complete, accept a terms version, mark age-verified. Returns the
+     * updated, persisted profile.
+     *
+     * <p>Kept as a dedicated sub-endpoint (rather than folding into {@code PATCH /me}) because
+     * accepting terms has a distinct side effect the generic profile PATCH does not — the server
+     * stamps the acceptance timestamp — so the semantics read more clearly on their own path.
+     *
+     * <p>Identity is derived only from the verified token ({@code uid}/{@code email} from the
+     * filter attributes, never the body). We provision first (idempotent) so a caller can hit this
+     * even before ever calling {@code GET /me}, then apply the sparse update
+     * ({@link UserService#updateLifecycle}).
+     */
+    @PatchMapping("/me/lifecycle")
+    public CurrentUser updateLifecycle(HttpServletRequest request, @Valid @RequestBody UpdateLifecycleRequest body) {
+        String uid = (String) request.getAttribute(FirebaseAuthenticationFilter.UID_ATTRIBUTE);
+        String email = (String) request.getAttribute(FirebaseAuthenticationFilter.EMAIL_ATTRIBUTE);
+        userService.provisionFromToken(uid, email);
+        User updated = userService.updateLifecycle(uid, body.toLifecycleUpdate());
         return toCurrentUser(updated);
     }
 
@@ -230,6 +293,10 @@ public class MeController {
                 user.getPhone(),
                 user.getNotificationPreference(),
                 user.getTimezone(),
-                user.getLocale());
+                user.getLocale(),
+                user.isOnboardingCompleted(),
+                user.getTermsAcceptedVersion(),
+                user.getTermsAcceptedAt(),
+                user.isAgeVerified());
     }
 }
