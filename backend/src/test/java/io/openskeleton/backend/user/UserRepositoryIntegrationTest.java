@@ -107,7 +107,10 @@ class UserRepositoryIntegrationTest {
         assertThat(found.getRole()).isEqualTo(Role.ADMIN);
         assertThat(found.isEnabled()).isFalse();
         // @PreUpdate advanced updatedAt but left the immutable createdAt untouched.
-        assertThat(found.getCreatedAt()).isEqualTo(createdAt);
+        // Compare at microsecond precision: Postgres timestamptz truncates the in-memory
+        // Instant (nanos on Linux CI, micros on macOS) to microseconds on the round-trip,
+        // so an exact isEqualTo is platform-dependent — truncate the expected to match.
+        assertThat(found.getCreatedAt()).isEqualTo(createdAt.truncatedTo(java.time.temporal.ChronoUnit.MICROS));
         assertThat(updated.getUpdatedAt()).isAfterOrEqualTo(createdAt);
     }
 
