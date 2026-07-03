@@ -16,6 +16,14 @@
 #       stays fast. It is still deliberately ABSENT from ci.yml — never fold it in
 #       there; add web triggers here instead.
 #
+# TWO JOBS (OSK-109):
+#   - `e2e` (fast gate) runs the smoke + theme specs on push/PR/dispatch via
+#     `--project=chromium`. It NEVER runs the visual-regression spec.
+#   - `visual` (nightly) runs the brittle+slow pixel-snapshot spec via
+#     `--project=visual` (with VISUAL=1) and ONLY on the `schedule:` cron below — not on
+#     any PR/push — comparing the live pages against the committed baseline PNGs
+#     (web/e2e/tests/visual.spec.ts-snapshots/). See web/e2e/README.md.
+#
 # SECURITY: every third-party action is pinned to a full commit SHA (never a moving
 #           tag), matching the convention in ci.yml. The trailing "# vX.Y.Z" records
 #           the human-readable version each SHA corresponds to. The SHAs here are the
@@ -26,10 +34,12 @@
 
 name: E2E
 
-# Post-merge on main + manual dispatch, PLUS a path-filtered PR trigger (OSK-108).
-# The `pull_request` run fires ONLY for PRs that touch web/** — the app pages or this
-# harness (web/e2e/** is nested under web/**) — so the specs can't rot unseen, while
-# PRs that don't touch web/ get NO e2e run and the PR gate (ci.yml) stays fast.
+# Post-merge on main + manual dispatch, PLUS a path-filtered PR trigger (OSK-108) and a
+# nightly schedule (OSK-109). The `pull_request` run fires ONLY for PRs that touch web/**
+# — the app pages or this harness (web/e2e/** is nested under web/**) — so the specs
+# can't rot unseen, while PRs that don't touch web/ get NO e2e run and the PR gate
+# (ci.yml) stays fast. The `schedule:` cron drives the nightly `visual` job below (the
+# visual-regression spec runs there and NOWHERE else).
 on:
   push:
     branches: [main]
@@ -37,6 +47,9 @@ on:
     paths:
       - 'web/**'
   workflow_dispatch:
+  # Nightly at 03:00 UTC — the ONLY trigger that runs the visual-regression job.
+  schedule:
+    - cron: '0 3 * * *'
 
 # Least-privilege: this job only reads the repo and uploads an artifact; it needs
 # no write scopes on the repo contents.
@@ -50,8 +63,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Fast gate: smoke + theme specs on push/PR/dispatch. Never on the nightly schedule
+  # (that is the `visual` job below) and never runs the visual-regression spec — it
+  # selects --project=chromium, which playwright.config.ts wires to ignore visual.spec.ts.
   e2e:
     name: Playwright smoke (headless Chromium)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     # All steps run inside the self-contained harness package.
     defaults:
@@ -81,10 +98,11 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      # Run the suite. playwright.config.ts's webServer boots static-server.mjs to
-      # serve web/ on a port, waits for it, runs the specs, then tears it down.
+      # Run the smoke + theme specs only (--project=chromium ignores visual.spec.ts).
+      # playwright.config.ts's webServer boots static-server.mjs to serve web/ on a port,
+      # waits for it, runs the specs, then tears it down.
       - name: Run Playwright smoke suite
-        run: npx playwright test
+        run: npx playwright test --project=chromium
 
       # On failure, upload the HTML report + screenshots/video/traces so a red run is
       # debuggable without re-running locally. Skipped on green to save storage.
@@ -93,6 +111,58 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
         with:
           name: playwright-report
+          path: |
+            web/e2e/playwright-report
+            web/e2e/test-results
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Nightly visual-regression (OSK-109). Runs ONLY on the schedule: cron above — never on
+  # a PR or push — because pixel snapshots are brittle + slow. It compares the live pages
+  # (both themes) against the committed baseline PNGs in
+  # web/e2e/tests/visual.spec.ts-snapshots/. VISUAL=1 + --project=visual together arm the
+  # spec's nightly guard; the baselines were generated on Linux to match this runner.
+  visual:
+    name: Playwright visual regression (nightly)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/e2e
+    env:
+      # Arms the nightly-only guard in tests/visual.spec.ts (test.skip unless set).
+      VISUAL: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/e2e/package-lock.json
+
+      - name: Install harness dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Compare the live pages against the committed baselines. --project=visual runs ONLY
+      # visual.spec.ts. Do NOT pass --update-snapshots here: a nightly run must FAIL on a
+      # real visual drift, not silently rewrite the baseline. Baselines are updated
+      # deliberately, locally, via `--update-snapshots` (see web/e2e/README.md).
+      - name: Run Playwright visual-regression suite
+        run: npx playwright test --project=visual
+
+      # On failure, upload the HTML report — it embeds the expected/actual/diff images so
+      # a visual drift is triaged from the artifact without re-running locally.
+      - name: Upload Playwright visual artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        with:
+          name: playwright-visual-report
           path: |
             web/e2e/playwright-report
             web/e2e/test-results
