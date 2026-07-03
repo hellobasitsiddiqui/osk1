@@ -325,6 +325,54 @@ function oskBuildProviderWith(authNs, id) {
   }
 }
 
+// ===========================================================================
+// AVATAR OBJECT PATH (OSK-83)
+// The single, PURE place that decides WHERE in Cloud Storage a user's avatar is
+// written: always under the caller's OWN `users/{uid}/avatar/…` prefix, so the
+// committed storage.rules (owner-only write) authorise it and the backend's
+// server-side ownership check (AvatarObject) accepts it. Keeping it here (not in
+// the page) means the browser upload path below and the Node simulation build the
+// exact same path, and the uid always comes from the SDK's authenticated user —
+// never a caller-supplied value.
+// ===========================================================================
+
+// The image extensions an avatar object may carry, mirrored on the backend
+// (AvatarObject.ALLOWED_EXTENSIONS) and in storage.rules. Value = the canonical
+// extension actually written (jpg/jpeg both allowed as input).
+var OSK_AVATAR_EXTENSIONS = { png: "png", jpg: "jpg", jpeg: "jpeg", webp: "webp", gif: "gif" };
+
+// Fallback extension per MIME type, used when the filename has no usable extension
+// (e.g. a camera capture named "image"). Firebase sends image/jpeg for .jpg files.
+var OSK_AVATAR_TYPE_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
+
+// Build the storage object path for a user's avatar: `users/<uid>/avatar/<ms>.<ext>`.
+// The timestamp makes each upload a fresh object (no overwrite race, and the new
+// download URL changes so caches don't serve a stale avatar). The extension is taken
+// from the filename when it is a known image type, else from the MIME type, else
+// defaults to png — so the path always ends in an allowed image extension the backend
+// accepts. Pure: deterministic given (uid, file, nowMs); no globals/DOM/SDK.
+//   uid    — the authenticated user's uid (caller passes auth.currentUser.uid).
+//   file   — a File-like object; only `.name` and `.type` (strings) are read.
+//   nowMs  — the upload timestamp in epoch millis (Date.now() in the browser).
+function oskAvatarObjectPath(uid, file, nowMs) {
+  var f = file || {};
+  var name = typeof f.name === "string" ? f.name : "";
+  var type = typeof f.type === "string" ? f.type.toLowerCase() : "";
+
+  var ext = "";
+  var dot = name.lastIndexOf(".");
+  if (dot >= 0 && dot < name.length - 1) {
+    var raw = name.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (OSK_AVATAR_EXTENSIONS[raw]) { ext = OSK_AVATAR_EXTENSIONS[raw]; }
+  }
+  if (!ext && OSK_AVATAR_TYPE_EXT[type]) { ext = OSK_AVATAR_TYPE_EXT[type]; }
+  if (!ext) { ext = "png"; }
+
+  var stamp = typeof nowMs === "number" && isFinite(nowMs) ? Math.trunc(nowMs) : 0;
+  var safeUid = String(uid == null ? "" : uid);
+  return "users/" + safeUid + "/avatar/" + stamp + "." + ext;
+}
+
 // ---------------------------------------------------------------------------
 // Node export. When this file is `require()`d (CommonJS), expose the pure helpers
 // so the guard logic can be simulated without a browser. `typeof module` is
@@ -344,6 +392,8 @@ if (typeof module !== "undefined" && module.exports) {
     applyProviderVisibility: oskApplyProviderVisibility,
     describeAuthError: oskDescribeAuthError,
     buildProviderWith: oskBuildProviderWith,
+    // OSK-83 — avatar upload (pure path builder; the browser upload lives on OSKAuth).
+    avatarObjectPath: oskAvatarObjectPath,
   };
 }
 
@@ -371,9 +421,13 @@ if (typeof window !== "undefined") {
 
     // Firebase handles, populated once the SDK loads. `authMod` is the modular
     // firebase-auth namespace (GoogleAuthProvider, signInWithPopup, …); `auth` is the
-    // initialised Auth instance whose `.currentUser` we read for tokens.
+    // initialised Auth instance whose `.currentUser` we read for tokens; `app` is the
+    // initialised FirebaseApp, kept so the Storage SDK (OSK-83 avatar upload) can bind
+    // to the SAME app — a second initializeApp would not share this app's auth state,
+    // so uploads would be unauthenticated and the storage rules would deny them.
     var authMod = null;
     var auth = null;
+    var app = null;
 
     // Subscribers to auth-state changes (the guard registers one here). Each is called
     // with the current Firebase user (or null). A Set makes unsubscribe trivial.
@@ -424,10 +478,11 @@ if (typeof window !== "undefined") {
         .then(function (mods) {
           var appMod = mods[0];
           authMod = mods[1];
-          var app = appMod.initializeApp({
+          app = appMod.initializeApp({
             apiKey: cfg.apiKey,
             authDomain: cfg.authDomain,
             projectId: cfg.projectId,
+            storageBucket: cfg.storageBucket,
             messagingSenderId: cfg.messagingSenderId,
             appId: cfg.appId,
           });
@@ -542,6 +597,38 @@ if (typeof window !== "undefined") {
       });
     }
 
+    // OSK-83: upload an avatar image straight to Cloud Storage under the CALLER's own
+    // `users/{uid}/avatar/…` area, then return { objectPath, downloadUrl } for the
+    // backend to reflect as the user's photoURL (PUT /api/v1/me/avatar). The bytes go
+    // directly to Storage — never through our backend — authorised by this signed-in
+    // user's ID token against the committed storage.rules (owner-only write, image +
+    // size limited). The Storage SDK is lazily imported from the SAME pinned gstatic
+    // build as auth, and bound to THIS app instance so it carries the live auth state.
+    // Rejects with a clear error when not configured / signed out, so the caller can
+    // surface it. Validation of the file (type/size) is the caller's job before this.
+    function uploadAvatar(file) {
+      return ensureLoaded().then(function () {
+        if (!auth || !authMod || !app) { throw new Error("Auth is not configured."); }
+        var user = auth.currentUser;
+        if (!user) { throw new Error("You must be signed in to upload an avatar."); }
+        var base = "https://www.gstatic.com/firebasejs/" + OSK_FIREBASE_SDK_VERSION + "/";
+        return import(base + "firebase-storage.js").then(function (storageMod) {
+          var storage = storageMod.getStorage(app);
+          var objectPath = oskAvatarObjectPath(user.uid, file, Date.now());
+          var storageRef = storageMod.ref(storage, objectPath);
+          // Preserve the picked file's content type so it renders correctly AND so the
+          // storage.rules contentType check (image/*) passes on the write.
+          var metadata = { contentType: (file && file.type) || "application/octet-stream" };
+          return storageMod
+            .uploadBytes(storageRef, file, metadata)
+            .then(function () { return storageMod.getDownloadURL(storageRef); })
+            .then(function (downloadUrl) {
+              return { objectPath: objectPath, downloadUrl: downloadUrl };
+            });
+        });
+      });
+    }
+
     // A snapshot of the current auth state for the guard's pure view computation.
     // Returns a fresh copy so callers can't mutate our internal state.
     function getState() {
@@ -571,6 +658,8 @@ if (typeof window !== "undefined") {
       signInWithProvider: signInWithProvider,
       signOut: signOut,
       getIdToken: getIdToken,
+      // OSK-83 — direct-to-Storage avatar upload (returns { objectPath, downloadUrl }).
+      uploadAvatar: uploadAvatar,
 
       // OSK-131 — provider config helpers, bound to THIS page's firebase config so the
       // sign-in UI can gate + render buttons without re-reading config. Same pure

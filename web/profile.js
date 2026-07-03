@@ -58,6 +58,22 @@ var OSK_PROFILE_FIELDS = [
 var OSK_PROFILE_READONLY_FIELDS = ["uid", "email", "role"];
 
 // ===========================================================================
+// AVATAR UPLOAD SPEC (OSK-83)
+// The client-side content-type + size gate for the avatar picker. This is the FIRST
+// gate (instant UX feedback before any upload); the hard boundaries are enforced again
+// by storage.rules at write time and by the backend before it sets photoURL. Kept in
+// sync with web/auth.js's allowed extensions, the backend AvatarObject allow-list, and
+// the storage.rules contentType/size limits.
+// ===========================================================================
+// 5 MiB — matches storage.rules `request.resource.size < 5 * 1024 * 1024` and the
+// backend AvatarObject.MAX_BYTES. Large enough for a real photo, small enough to keep
+// uploads snappy and Storage costs bounded.
+var OSK_AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+// The MIME types the picker accepts. image/jpeg covers both .jpg and .jpeg. SVG is
+// deliberately excluded (it can carry script) — raster formats only.
+var OSK_AVATAR_ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+// ===========================================================================
 // PURE, ENVIRONMENT-AGNOSTIC HELPERS
 // These take plain data and return plain data. They touch no globals, no DOM and no
 // network, so they run identically in the browser and under `node`/`require` — which is
@@ -166,6 +182,34 @@ function oskParseProblemErrors(body) {
   }
 
   return result;
+}
+
+// Validate a picked avatar File against the content-type + size gate (OSK-83). PURE:
+// reads only `file.type` / `file.size`, returns a plain outcome the UI renders. Returns
+// { ok: true } for an acceptable image, else { ok: false, error: <message> }. Defensive
+// against a null file / missing fields (a cancelled picker yields null).
+//   file — a File-like object ({ type, size }); null/undefined when nothing is chosen.
+//   opts — optional { maxBytes, acceptedTypes } override (defaults to the spec above).
+function oskValidateAvatarFile(file, opts) {
+  var o = opts || {};
+  var maxBytes = typeof o.maxBytes === "number" ? o.maxBytes : OSK_AVATAR_MAX_BYTES;
+  var types = o.acceptedTypes || OSK_AVATAR_ACCEPTED_TYPES;
+
+  if (!file) {
+    return { ok: false, error: "Choose an image to upload." };
+  }
+  var type = typeof file.type === "string" ? file.type.toLowerCase() : "";
+  if (types.indexOf(type) === -1) {
+    return { ok: false, error: "Choose a PNG, JPEG, WebP or GIF image." };
+  }
+  var size = typeof file.size === "number" ? file.size : 0;
+  if (size <= 0) {
+    return { ok: false, error: "That image looks empty. Choose another file." };
+  }
+  if (size > maxBytes) {
+    return { ok: false, error: "That image is too large — the maximum is 5 MB." };
+  }
+  return { ok: true };
 }
 
 // ===========================================================================
@@ -449,6 +493,220 @@ function oskCreateProfileController(deps) {
   };
 }
 
+// ===========================================================================
+// AVATAR CONTROLLER (OSK-83) — dependency-injected like the profile controller, so it
+// runs in the browser AND under a fake DOM + stubbed fetch/upload in Node. It owns ONLY
+// the avatar panel: pick + validate + preview, then upload-to-Storage + PUT
+// /api/v1/me/avatar, rendering the current avatar / errors / success. It assumes it is
+// only driven when the user is signed in (the guard reveals #profile-app).
+//
+// deps = {
+//   doc           — DOM-ish { getElementById(id) -> element|null }. Elements need only
+//                   the props touched here: img `.src`; error/success `.textContent` +
+//                   `.hidden`; the file input `.value`; the upload button `.disabled`.
+//   fetchFn       — fetch(url, opts) -> Promise<{ ok, status, json() }>.
+//   getIdToken    — () -> Promise<string|null>. OSKAuth.getIdToken in the browser.
+//   uploadFn      — (file) -> Promise<{ objectPath, downloadUrl }>. OSKAuth.uploadAvatar
+//                   in the browser; a stub in the sim (so NO real Storage is needed).
+//   apiBaseUrl    — backend base URL (config.js apiBaseUrl); trailing slashes trimmed.
+//   previewUrlFor — (file) -> string. A local preview URL for the picked file
+//                   (URL.createObjectURL in the browser; a fake string in the sim).
+//   revokePreview — optional (url) -> void. Frees a previous preview URL (browser only).
+// }
+// ===========================================================================
+function oskCreateAvatarController(deps) {
+  var d = deps || {};
+  var doc = d.doc;
+  var fetchFn = d.fetchFn;
+  var getIdToken = d.getIdToken;
+  var uploadFn = d.uploadFn;
+  var apiBase = String(d.apiBaseUrl || "").replace(/\/+$/, "");
+  var previewUrlFor = typeof d.previewUrlFor === "function" ? d.previewUrlFor : function () { return ""; };
+  var revokePreview = typeof d.revokePreview === "function" ? d.revokePreview : function () {};
+
+  // The validated File awaiting upload (null until a valid one is picked), and the last
+  // local preview URL we created (so it can be revoked when replaced — browser only).
+  var selectedFile = null;
+  var lastPreviewUrl = null;
+
+  function el(id) { return doc && doc.getElementById ? doc.getElementById(id) : null; }
+  function setText(id, text) {
+    var node = el(id);
+    if (node) { node.textContent = text || ""; node.hidden = !text; }
+  }
+  function setUploadEnabled(enabled) {
+    var btn = el("pf-avatar-upload");
+    if (btn) { btn.disabled = !enabled; }
+  }
+  function showError(message) { setText("pf-avatar-error", message); }
+  function showSuccess(message) { setText("pf-avatar-success", message); }
+  function clearMessages() {
+    setText("pf-avatar-error", "");
+    setText("pf-avatar-success", "");
+  }
+  function setImage(src) {
+    var img = el("pf-avatar-img");
+    if (img && src) { img.src = src; img.hidden = false; }
+  }
+
+  // Show the caller's CURRENT avatar (their live Firebase photoURL from GET /me). Absent
+  // photoURL leaves the placeholder in place. Called after the profile loads.
+  function showCurrent(photoUrl) {
+    if (photoUrl) { setImage(photoUrl); }
+  }
+
+  // Handle a freshly-picked file: validate, then either preview it (and arm Upload) or
+  // show the reason and disarm Upload. Returns the validation outcome so the sim can assert.
+  function selectFile(file) {
+    clearMessages();
+    var result = oskValidateAvatarFile(file);
+    if (!result.ok) {
+      selectedFile = null;
+      setUploadEnabled(false);
+      showError(result.error);
+      return result;
+    }
+    selectedFile = file;
+    // Preview the picked file locally (before any upload). Revoke the previous preview
+    // URL first so repeated picks don't leak object URLs in the browser.
+    if (lastPreviewUrl) { revokePreview(lastPreviewUrl); }
+    lastPreviewUrl = previewUrlFor(file);
+    setImage(lastPreviewUrl);
+    setUploadEnabled(true);
+    return result;
+  }
+
+  // Upload the selected file to Storage, then PUT /api/v1/me/avatar to reflect it as the
+  // user's photoURL. Resolves to an outcome object (mirrors the profile controller's
+  // save()) so the sim can assert the path taken without scraping the DOM. On 2xx it
+  // adopts the returned photoURL as the shown avatar and resets the picker.
+  function upload() {
+    clearMessages();
+    if (!selectedFile) {
+      var v = oskValidateAvatarFile(null);
+      showError(v.error);
+      return Promise.resolve({ ok: false, reason: "no-file" });
+    }
+
+    setUploadEnabled(false);
+    var fileToUpload = selectedFile;
+    return Promise.resolve()
+      .then(function () { return getIdToken(); })
+      .then(function (token) {
+        if (!token) {
+          showError("You're not signed in. Sign in to upload an avatar.");
+          return { ok: false, reason: "no-token" };
+        }
+        // 1) Push the bytes straight to Cloud Storage (owner-only area, enforced by the
+        //    storage rules). uploadFn hides the Storage SDK; a rejection here is a
+        //    Storage/permission/network failure.
+        return Promise.resolve()
+          .then(function () { return uploadFn(fileToUpload); })
+          .then(
+            function (ref) {
+              var objectPath = ref && ref.objectPath;
+              var downloadUrl = ref && ref.downloadUrl;
+              if (!objectPath || !downloadUrl) {
+                showError("Upload failed — no storage reference was returned.");
+                return { ok: false, reason: "bad-upload" };
+              }
+              // 2) Tell the backend to reflect the uploaded object as the photoURL.
+              return fetchFn(apiBase + "/api/v1/me/avatar", {
+                method: "PUT",
+                headers: {
+                  Authorization: "Bearer " + token,
+                  "Content-Type": "application/json",
+                  Accept: "application/json",
+                },
+                cache: "no-store",
+                body: JSON.stringify({ objectPath: objectPath, downloadUrl: downloadUrl }),
+              }).then(function (res) {
+                if (res.status === 401) {
+                  showError("Your session isn't authorized (401). Try signing out and back in.");
+                  return { ok: false, status: 401 };
+                }
+                if (res.status === 403) {
+                  showError("You don't have permission to update this avatar (403).");
+                  return { ok: false, status: 403 };
+                }
+                if (res.status === 503) {
+                  showError("Avatar updates are temporarily unavailable. Please try again shortly.");
+                  return { ok: false, status: 503 };
+                }
+                if (res.status === 400) {
+                  return res.json().then(
+                    function (problem) {
+                      var parsed = oskParseProblemErrors(problem);
+                      var msg = parsed.detail
+                        || (parsed.generalMessages.length ? parsed.generalMessages.join(" ") : "")
+                        || "Your avatar was rejected (400).";
+                      showError(msg);
+                      return { ok: false, status: 400 };
+                    },
+                    function () {
+                      showError("Your avatar was rejected (400).");
+                      return { ok: false, status: 400 };
+                    }
+                  );
+                }
+                if (!res.ok) {
+                  showError("Couldn't update your avatar (HTTP " + res.status + ").");
+                  return { ok: false, status: res.status };
+                }
+                // 2xx — adopt the authoritative photoURL from the response and reset.
+                return res.json().then(
+                  function (updated) {
+                    var photoUrl = updated && typeof updated === "object" ? updated.photoUrl : null;
+                    if (photoUrl) { setImage(photoUrl); }
+                    resetPicker();
+                    showSuccess("Avatar updated.");
+                    return { ok: true, status: res.status, photoUrl: photoUrl || null };
+                  },
+                  function () {
+                    // Saved but the body was unreadable — still a success for the user.
+                    resetPicker();
+                    showSuccess("Avatar updated.");
+                    return { ok: true, status: res.status, photoUrl: null };
+                  }
+                );
+              });
+            },
+            function () {
+              // The Storage upload itself failed (permission / network / not configured).
+              showError("Couldn't upload your image. Please try again.");
+              return { ok: false, reason: "upload-failed" };
+            }
+          );
+      })
+      .catch(function () {
+        showError("Couldn't reach the backend to update your avatar.");
+        return { ok: false, reason: "network" };
+      })
+      .then(function (outcome) {
+        // Re-arm Upload only if a file is still selected (a success resets it to null).
+        setUploadEnabled(!!selectedFile);
+        return outcome;
+      });
+  }
+
+  // Clear the selection + file input after a successful upload so the same file isn't
+  // re-uploaded on a stray second click, and the preview now shows the saved avatar.
+  function resetPicker() {
+    selectedFile = null;
+    if (lastPreviewUrl) { revokePreview(lastPreviewUrl); lastPreviewUrl = null; }
+    var input = el("pf-avatar-file");
+    if (input) { input.value = ""; }
+    setUploadEnabled(false);
+  }
+
+  return {
+    showCurrent: showCurrent,
+    selectFile: selectFile,
+    upload: upload,
+    getSelectedFile: function () { return selectedFile; },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Node export. When required (CommonJS), expose the pure helpers + the controller factory
 // so the page's behaviour can be simulated headlessly. `typeof module` is "undefined" in a
@@ -462,6 +720,11 @@ if (typeof module !== "undefined" && module.exports) {
     buildPatch: oskBuildPatch,
     parseProblemErrors: oskParseProblemErrors,
     createProfileController: oskCreateProfileController,
+    // OSK-83 — avatar upload (pure validator + DOM-injectable controller).
+    OSK_AVATAR_MAX_BYTES: OSK_AVATAR_MAX_BYTES,
+    OSK_AVATAR_ACCEPTED_TYPES: OSK_AVATAR_ACCEPTED_TYPES,
+    validateAvatarFile: oskValidateAvatarFile,
+    createAvatarController: oskCreateAvatarController,
   };
 }
 
@@ -504,6 +767,23 @@ if (typeof window !== "undefined") {
         fetchFn: window.fetch.bind(window),
         getIdToken: function () { return A.getIdToken(); },
         apiBaseUrl: cfg.apiBaseUrl || "",
+      });
+
+      // OSK-83: the avatar controller, wired to the REAL DOM/fetch/token, plus the two
+      // browser-only seams it can't be given in Node — the Storage upload (OSKAuth.
+      // uploadAvatar) and a local object-URL preview for the picked file.
+      var avatar = oskCreateAvatarController({
+        doc: document,
+        fetchFn: window.fetch.bind(window),
+        getIdToken: function () { return A.getIdToken(); },
+        uploadFn: function (file) { return A.uploadAvatar(file); },
+        apiBaseUrl: cfg.apiBaseUrl || "",
+        previewUrlFor: function (file) {
+          try { return window.URL.createObjectURL(file); } catch (e) { return ""; }
+        },
+        revokePreview: function (url) {
+          try { window.URL.revokeObjectURL(url); } catch (e) { /* nothing to free */ }
+        },
       });
 
       // --- Sign-in affordance (shown when signed out) --------------------------
@@ -566,6 +846,25 @@ if (typeof window !== "undefined") {
         });
       }
 
+      // --- Avatar wiring (OSK-83) ---------------------------------------------
+      // Picking a file validates + previews it (arming the Upload button); clicking
+      // Upload pushes it to Storage and PUTs /api/v1/me/avatar. The button starts
+      // disabled (nothing selected) — the controller enables it on a valid pick.
+      var avatarFile = document.getElementById("pf-avatar-file");
+      var avatarUpload = document.getElementById("pf-avatar-upload");
+      if (avatarUpload) { avatarUpload.disabled = true; }
+      if (avatarFile) {
+        avatarFile.addEventListener("change", function () {
+          var file = avatarFile.files && avatarFile.files[0] ? avatarFile.files[0] : null;
+          avatar.selectFile(file);
+        });
+      }
+      if (avatarUpload) {
+        avatarUpload.addEventListener("click", function () {
+          avatar.upload();
+        });
+      }
+
       // --- Guard render loop (identical decision logic to app.html) -----------
       // Recompute the view from the current auth state and apply it; on the transition INTO
       // signed-in, load the profile once (not on every repaint).
@@ -574,7 +873,13 @@ if (typeof window !== "undefined") {
         var view = A.computeGuardView(A.getState());
         A.applyGuardView(view, els);
         if (view.mode === "signed-in") {
-          if (!wasSignedIn) { controller.loadProfile(); }
+          if (!wasSignedIn) {
+            // Load the profile once on the transition into signed-in, then reflect the
+            // caller's current avatar (their live Firebase photoURL) into the preview.
+            controller.loadProfile().then(function () {
+              avatar.showCurrent((controller.getOriginal() || {}).photoUrl);
+            });
+          }
           wasSignedIn = true;
         } else {
           wasSignedIn = false;

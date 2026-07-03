@@ -292,6 +292,19 @@
         },
         "type" : "object"
       },
+      "SetAvatarRequest" : {
+        "properties" : {
+          "downloadUrl" : {
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "objectPath" : {
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "UpdateEnabledRequest" : {
         "properties" : {
           "enabled" : {
@@ -718,6 +731,34 @@
             "application/json" : {
               "schema" : {
                 "$ref" : "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CurrentUser"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "me-controller" ]
+      }
+    },
+    "/api/v1/me/avatar" : {
+      "put" : {
+        "operationId" : "updateAvatar",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/SetAvatarRequest"
               }
             }
           },

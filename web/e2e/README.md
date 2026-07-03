@@ -23,6 +23,7 @@ web/e2e/
 ├── completion-gate.simulation.cjs # headless Node sim of the OSK-136 first-login gate
 ├── badges.simulation.cjs       # headless Node sim of the OSK-70 account-state badges
 ├── history.simulation.cjs      # headless Node sim of the OSK-101 profile-history view
+├── avatar.simulation.cjs       # headless Node sim of the OSK-83 avatar upload flow
 ├── tests/
 │   ├── smoke.spec.ts      # the static-pages smoke walkthrough
 │   ├── theme.spec.ts      # the default <-> sketch theme-switch walkthrough
@@ -187,6 +188,31 @@ without a live sign-in:
   signed-in fetch/render path the browser can't reach in CI. It renders into a fake DOM and
   uses a stubbed `fetch`. Run it with `node history.simulation.cjs` (exits non-zero on any
   failure).
+
+## Avatar upload (OSK-83) — headless simulation
+
+The edit-profile page (`web/profile.html` + `web/profile.js`) lets a signed-in user pick an
+image, preview it, and upload it as their profile photo. The bytes go **straight to Cloud
+Storage** under the caller's own `users/{uid}/…` area (the Firebase Storage Web SDK via
+`web/auth.js` → `OSKAuth.uploadAvatar`, owner-only per the committed `storage.rules`); the
+backend then reflects the object as the user's Firebase `photoURL`
+(`PUT /api/v1/me/avatar`), which `GET /api/v1/me` already surfaces live (OSK-73). A live run
+needs the human apiKey (**OSK-92**), firebase-scoped ADC (**OSK-38**) and the Storage product
+enabled (**OSK-95**), so the whole flow is covered headlessly:
+
+- **`avatar.simulation.cjs`** — a zero-dependency Node script that `require()`s the pure
+  helpers + DOM-injectable **avatar controller** `profile.js` exports (plus the pure
+  `avatarObjectPath` from `auth.js`) and asserts, with a fake DOM + a **stubbed fetch** + a
+  **stubbed upload seam** (so no real Storage is touched): the content-type + size
+  **`validateAvatarFile`** gate, the per-user **`avatarObjectPath`** builder (always under
+  `users/<uid>/avatar/`, extension from filename/MIME/png-fallback), pick→preview→**arm**,
+  the happy **upload → PUT `{objectPath, downloadUrl}` → adopt the returned `photoURL`**
+  path, and graceful **no-file / 400 / 401 / 503 / Storage-failure / no-token** handling. Run
+  it with `node avatar.simulation.cjs` (exits non-zero on any failure).
+
+The avatar panel lives inside the signed-in `#profile-app` region, so it is **hidden when
+signed-out / not-configured** and does not affect `tests/profile.spec.ts`'s "signed-out"
+assertions.
 
 ## First-login profile-completion gate (OSK-136) — headless simulation
 
