@@ -2,9 +2,13 @@ package io.openskeleton.backend.user;
 
 import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.web.NotFoundException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -87,7 +91,7 @@ public class UserService {
      * otherwise a fresh {@code User} is inserted carrying the least-privilege defaults the
      * entity itself declares ({@code role = USER}, {@code enabled = true}). The
      * {@code displayName} starts {@code null} — the auth filter does not publish it, so it
-     * is only set later via {@link #updateProfile(String, String)} (PATCH /me).
+     * is only set later via {@link #updateProfile(String, ProfileUpdate)} (PATCH /me).
      *
      * <p><b>Idempotent under a first-request race (AC-1):</b> two concurrent first
      * requests for the same brand-new user can both observe "not found" and both attempt
@@ -132,12 +136,19 @@ public class UserService {
     }
 
     /**
-     * Update the mutable profile of the caller's persisted user (OSK-76, PATCH /me).
+     * Update the mutable profile of the caller's persisted user (OSK-76 displayName, extended
+     * to the richer profile fields by OSK-67: first/last name, city, age, phone, notification
+     * preference, timezone, locale). The identity fields ({@code firebaseUid}, {@code email},
+     * {@code role}, {@code enabled}, {@code accountType}) are intentionally NOT touched here —
+     * they are derived from the verified token or governed by other flows, never a request body.
      *
-     * <p>Today the only client-settable field is {@code displayName}; the identity fields
-     * ({@code firebaseUid}, {@code email}, {@code role}, {@code enabled}) are intentionally
-     * NOT touched here — they are derived from the verified token or governed by other
-     * flows, never from a request body.
+     * <p><b>Sparse (partial) update.</b> The {@link ProfileUpdate} carries one component per
+     * editable field; a {@code null} component means "leave this field unchanged" and a
+     * non-null one is the requested value (already validated at the API boundary). So a PATCH
+     * that touches only one field never clobbers the others. A field is written only when the
+     * requested value genuinely differs from the current one ({@link Objects#equals} guard):
+     * an idempotent PATCH that resubmits current values is a <b>no-op</b> — no UPDATE, no
+     * history — because history records genuine edits, not every request.
      *
      * <p>Runs in a single transaction so the load-mutate-save is atomic and carries the
      * {@code @Version} optimistic-lock check inherited from {@code BaseEntity}: a concurrent
@@ -145,49 +156,104 @@ public class UserService {
      * to already exist — the controller provisions first — so a missing row is a genuine
      * {@link NotFoundException} (404).
      *
-     * <p><b>Change history (OSK-99).</b> When the value actually changes, a per-field
-     * history event is appended through the audit seam ({@link AuditService#record}) in the
-     * SAME transaction — so the profile write and its history row commit atomically (or roll
-     * back together). It records {@code who} ({@code firebaseUid}), {@code what}
-     * ({@link io.openskeleton.backend.audit.AuditAction#PROFILE_UPDATED}), the target user
-     * id, and a {@code {field, old, new}} metadata payload, all encoded by {@link ProfileChange}.
-     * An idempotent PATCH that resubmits the current value is intentionally a <b>no-op</b>: no
-     * UPDATE, no history row (guarded by the {@link Objects#equals} check below) — history
-     * records genuine edits, not every request.
+     * <p><b>Change history (OSK-99), now per changed field.</b> Every field that actually
+     * changes appends its own {@code PROFILE_UPDATED} event through the audit seam
+     * ({@link AuditService#record}) in the SAME transaction — so the profile write and all its
+     * history rows commit atomically (or roll back together). Each event records {@code who}
+     * ({@code firebaseUid}), {@code what}
+     * ({@link io.openskeleton.backend.audit.AuditAction#PROFILE_UPDATED}), the target user id,
+     * and a {@code {field, old, new}} metadata payload encoded by {@link ProfileChange} — the
+     * exact same shape {@code GET /api/v1/me/history} reads back, so the new fields appear in
+     * history alongside the original {@code displayName}.
      *
      * @param firebaseUid the verified uid identifying which user to update
-     * @param displayName the new display name (may be {@code null} to clear it)
+     * @param update the requested field changes (null components are left unchanged)
      * @return the updated, persisted user (or the unchanged user when nothing changed)
      * @throws NotFoundException if no active user exists for the uid
      */
     @Transactional
-    public User updateProfile(String firebaseUid, String displayName) {
+    public User updateProfile(String firebaseUid, ProfileUpdate update) {
         User user = userRepository
                 .findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new NotFoundException("No active user with firebaseUid " + firebaseUid));
 
-        String previousDisplayName = user.getDisplayName();
-        // Null-safe compare: only a genuine change is persisted and recorded. Objects.equals
-        // handles the null cases (first-ever set: null → value; clear: value → null) without
-        // an NPE, and short-circuits a redundant PATCH into a no-op.
-        if (Objects.equals(previousDisplayName, displayName)) {
+        // Apply each requested change (if genuinely different), collecting the per-field edits
+        // so the history is recorded once, after the single save — mirroring the original
+        // OSK-99 order (persist the change, then record it). One helper centralises the
+        // null-skip + changed-vs-unchanged logic so every field behaves identically.
+        List<FieldEdit> edits = new ArrayList<>();
+        applyIfChanged(
+                edits,
+                ProfileChange.FIELD_DISPLAY_NAME,
+                update.displayName(),
+                user::getDisplayName,
+                user::setDisplayName);
+        applyIfChanged(
+                edits, ProfileChange.FIELD_FIRST_NAME, update.firstName(), user::getFirstName, user::setFirstName);
+        applyIfChanged(edits, ProfileChange.FIELD_LAST_NAME, update.lastName(), user::getLastName, user::setLastName);
+        applyIfChanged(edits, ProfileChange.FIELD_CITY, update.city(), user::getCity, user::setCity);
+        applyIfChanged(edits, ProfileChange.FIELD_AGE, update.age(), user::getAge, user::setAge);
+        applyIfChanged(edits, ProfileChange.FIELD_PHONE, update.phone(), user::getPhone, user::setPhone);
+        applyIfChanged(
+                edits,
+                ProfileChange.FIELD_NOTIFICATION_PREFERENCE,
+                update.notificationPreference(),
+                user::getNotificationPreference,
+                user::setNotificationPreference);
+        applyIfChanged(edits, ProfileChange.FIELD_TIMEZONE, update.timezone(), user::getTimezone, user::setTimezone);
+        applyIfChanged(edits, ProfileChange.FIELD_LOCALE, update.locale(), user::getLocale, user::setLocale);
+
+        // Nothing genuinely changed → no write and no history (idempotent PATCH is a no-op).
+        if (edits.isEmpty()) {
             return user;
         }
 
-        user.setDisplayName(displayName);
         User saved = userRepository.save(user);
-        // Append the per-field change to the append-only audit log, reusing audit_events
-        // (no bespoke history table): "this user's profile changes" is a clean actor +
-        // PROFILE_UPDATED filter, read back by GET /api/v1/me/history. This joins the
-        // current @Transactional, so the update and its history entry are atomic.
-        auditService.record(
-                firebaseUid,
-                ProfileChange.ACTION,
-                ProfileChange.TARGET_TYPE,
-                saved.getId().toString(),
-                ProfileChange.metadata(ProfileChange.FIELD_DISPLAY_NAME, previousDisplayName, displayName));
+        String targetId = saved.getId().toString();
+        for (FieldEdit edit : edits) {
+            auditService.record(
+                    firebaseUid,
+                    ProfileChange.ACTION,
+                    ProfileChange.TARGET_TYPE,
+                    targetId,
+                    ProfileChange.metadata(edit.field(), edit.oldValue(), edit.newValue()));
+        }
         return saved;
     }
+
+    /**
+     * Apply one requested field change to {@code user} when it is both present and genuinely
+     * different, recording the before/after into {@code edits} for later history. A
+     * {@code null} {@code requested} is the sparse-PATCH "leave unchanged" signal, and a
+     * {@link Objects#equals} match short-circuits a redundant change — so neither writes.
+     *
+     * @param edits accumulator the caller drains into the audit log after the save
+     * @param field the {@link ProfileChange} field name recorded in history
+     * @param requested the requested new value, or {@code null} to leave the field unchanged
+     * @param current supplier of the field's current value (read before mutating)
+     * @param setter setter that applies the new value to the entity
+     * @param <T> the field's type (String, Integer, or an enum)
+     */
+    private static <T> void applyIfChanged(
+            List<FieldEdit> edits, String field, T requested, Supplier<T> current, Consumer<T> setter) {
+        if (requested == null) {
+            return; // caller did not ask to change this field (sparse PATCH) — leave it.
+        }
+        T old = current.get();
+        if (Objects.equals(old, requested)) {
+            return; // already the requested value — no genuine change, so no write/history.
+        }
+        setter.accept(requested);
+        edits.add(new FieldEdit(field, asString(old), asString(requested)));
+    }
+
+    /** Null-safe stringification for history metadata — a null value stays null, not "null". */
+    private static String asString(Object value) {
+        return value == null ? null : value.toString();
+    }
+
+    /** A single applied field edit, held until the history is written after the save. */
+    private record FieldEdit(String field, String oldValue, String newValue) {}
 
     /**
      * Mark the active user's {@link AccountType} — the reusable seam for flagging an

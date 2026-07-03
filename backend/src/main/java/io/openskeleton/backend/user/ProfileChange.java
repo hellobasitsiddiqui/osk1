@@ -51,8 +51,19 @@ public record ProfileChange(String field, String oldValue, String newValue, Stri
      */
     public static final String TARGET_TYPE = "user";
 
-    /** The only field editable via {@code PATCH /api/v1/me} today (OSK-76). */
+    // Names of the profile fields editable via {@code PATCH /api/v1/me}, each recorded under
+    // its own history event. FIELD_DISPLAY_NAME is the original (OSK-76); the rest are the
+    // richer profile fields (OSK-67). These strings are the {@code field} value stored in each
+    // audit event's metadata, so they are the stable contract read back by GET /me/history.
     public static final String FIELD_DISPLAY_NAME = "displayName";
+    public static final String FIELD_FIRST_NAME = "firstName";
+    public static final String FIELD_LAST_NAME = "lastName";
+    public static final String FIELD_CITY = "city";
+    public static final String FIELD_AGE = "age";
+    public static final String FIELD_PHONE = "phone";
+    public static final String FIELD_NOTIFICATION_PREFERENCE = "notificationPreference";
+    public static final String FIELD_TIMEZONE = "timezone";
+    public static final String FIELD_LOCALE = "locale";
 
     // JSONB metadata keys. Kept private + centralised here so the writer and reader use
     // the exact same strings — a magic-string mismatch would silently produce history

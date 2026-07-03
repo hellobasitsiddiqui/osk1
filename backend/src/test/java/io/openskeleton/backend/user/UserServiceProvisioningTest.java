@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -13,6 +14,7 @@ import io.openskeleton.backend.audit.AuditAction;
 import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.user.User.Role;
 import io.openskeleton.backend.web.NotFoundException;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -123,7 +125,7 @@ class UserServiceProvisioningTest {
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
         // First-ever set: null → "New Name" (exercises the null old-value path too).
-        User result = userService.updateProfile("uid-p", "New Name");
+        User result = userService.updateProfile("uid-p", ProfileUpdate.ofDisplayName("New Name"));
 
         assertThat(result.getDisplayName()).isEqualTo("New Name");
         verify(userRepository).save(user);
@@ -152,7 +154,7 @@ class UserServiceProvisioningTest {
         User user = new User("uid-same", "same@example.com", "Stable Name");
         when(userRepository.findByFirebaseUid("uid-same")).thenReturn(Optional.of(user));
 
-        User result = userService.updateProfile("uid-same", "Stable Name");
+        User result = userService.updateProfile("uid-same", ProfileUpdate.ofDisplayName("Stable Name"));
 
         assertThat(result).isSameAs(user);
         verify(userRepository, never()).save(any());
@@ -163,7 +165,120 @@ class UserServiceProvisioningTest {
     void updateProfileThrowsNotFoundWhenUserMissing() {
         when(userRepository.findByFirebaseUid("uid-missing")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> userService.updateProfile("uid-missing", "x")).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> userService.updateProfile("uid-missing", ProfileUpdate.ofDisplayName("x")))
+                .isInstanceOf(NotFoundException.class);
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void updateProfileAppliesEveryNewFieldAndRecordsOneHistoryEventPerChange() {
+        // OSK-67: a single PATCH that sets displayName plus all eight new fields from their
+        // defaults must apply each and record exactly ONE PROFILE_UPDATED event per field,
+        // with correctly stringified before/after (age Integer, notificationPreference enum).
+        User user = new User("uid-full", "full@example.com", null);
+        UUID userId = UUID.randomUUID();
+        user.setId(userId);
+        when(userRepository.findByFirebaseUid("uid-full")).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ProfileUpdate update = new ProfileUpdate(
+                "Display Name",
+                "Ada",
+                "Lovelace",
+                "London",
+                30,
+                "+15551234567",
+                NotificationPreference.PUSH,
+                "Europe/London",
+                "en-GB");
+
+        User result = userService.updateProfile("uid-full", update);
+
+        // Every field landed on the entity (a single save persisted them all).
+        assertThat(result.getDisplayName()).isEqualTo("Display Name");
+        assertThat(result.getFirstName()).isEqualTo("Ada");
+        assertThat(result.getLastName()).isEqualTo("Lovelace");
+        assertThat(result.getCity()).isEqualTo("London");
+        assertThat(result.getAge()).isEqualTo(30);
+        assertThat(result.getPhone()).isEqualTo("+15551234567");
+        assertThat(result.getNotificationPreference()).isEqualTo(NotificationPreference.PUSH);
+        assertThat(result.getTimezone()).isEqualTo("Europe/London");
+        assertThat(result.getLocale()).isEqualTo("en-GB");
+        verify(userRepository).save(user);
+
+        // Nine genuine changes → nine history events, all for this actor + target.
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
+        verify(auditService, times(9))
+                .record(
+                        eq("uid-full"),
+                        eq(AuditAction.PROFILE_UPDATED),
+                        eq(ProfileChange.TARGET_TYPE),
+                        eq(userId.toString()),
+                        metadata.capture());
+        List<Map<String, Object>> recorded = metadata.getAllValues();
+        // The non-String fields must be stringified in metadata: age -> "30", enum -> its name.
+        assertThat(recorded)
+                .anySatisfy(m -> assertThat(m)
+                        .containsEntry("field", ProfileChange.FIELD_AGE)
+                        .containsEntry("old", null)
+                        .containsEntry("new", "30"))
+                .anySatisfy(m -> assertThat(m)
+                        .containsEntry("field", ProfileChange.FIELD_NOTIFICATION_PREFERENCE)
+                        .containsEntry("old", "EMAIL")
+                        .containsEntry("new", "PUSH"))
+                .anySatisfy(m -> assertThat(m)
+                        .containsEntry("field", ProfileChange.FIELD_LOCALE)
+                        .containsEntry("new", "en-GB"));
+    }
+
+    @Test
+    void updateProfileWithValuesEqualToCurrentIsANoOpAcrossAllFields() {
+        // Every requested value already equals the entity's current value → no genuine change
+        // on any field, so nothing is written and no history is recorded (the changed-vs-
+        // unchanged branch, exercised for the new fields too).
+        User user = new User("uid-noop", "noop@example.com", "Same");
+        user.setFirstName("Ada");
+        user.setLastName("Lovelace");
+        user.setCity("London");
+        user.setAge(30);
+        user.setPhone("+15551234567");
+        user.setNotificationPreference(NotificationPreference.EMAIL);
+        user.setTimezone("Europe/London");
+        user.setLocale("en-GB");
+        when(userRepository.findByFirebaseUid("uid-noop")).thenReturn(Optional.of(user));
+
+        User result = userService.updateProfile(
+                "uid-noop",
+                new ProfileUpdate(
+                        "Same",
+                        "Ada",
+                        "Lovelace",
+                        "London",
+                        30,
+                        "+15551234567",
+                        NotificationPreference.EMAIL,
+                        "Europe/London",
+                        "en-GB"));
+
+        assertThat(result).isSameAs(user);
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void updateProfileWithAllNullComponentsIsANoOp() {
+        // A ProfileUpdate whose components are all null is the "change nothing" case (the
+        // requested == null branch for every field): no write, no history.
+        User user = new User("uid-empty", "empty@example.com", "Keep");
+        when(userRepository.findByFirebaseUid("uid-empty")).thenReturn(Optional.of(user));
+
+        User result = userService.updateProfile(
+                "uid-empty", new ProfileUpdate(null, null, null, null, null, null, null, null, null));
+
+        assertThat(result).isSameAs(user);
+        assertThat(result.getDisplayName()).isEqualTo("Keep"); // untouched
         verify(userRepository, never()).save(any());
         verifyNoInteractions(auditService);
     }

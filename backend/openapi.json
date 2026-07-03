@@ -14,13 +14,39 @@
       },
       "CurrentUser" : {
         "properties" : {
+          "age" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "city" : {
+            "type" : "string"
+          },
           "displayName" : {
             "type" : "string"
           },
           "email" : {
             "type" : "string"
           },
+          "firstName" : {
+            "type" : "string"
+          },
+          "lastName" : {
+            "type" : "string"
+          },
+          "locale" : {
+            "type" : "string"
+          },
+          "notificationPreference" : {
+            "enum" : [ "EMAIL", "PUSH", "NONE" ],
+            "type" : "string"
+          },
+          "phone" : {
+            "type" : "string"
+          },
           "role" : {
+            "type" : "string"
+          },
+          "timezone" : {
             "type" : "string"
           },
           "uid" : {
@@ -169,7 +195,36 @@
       },
       "UpdateProfileRequest" : {
         "properties" : {
+          "age" : {
+            "format" : "int32",
+            "maximum" : 120,
+            "minimum" : 13,
+            "type" : "integer"
+          },
+          "city" : {
+            "type" : "string"
+          },
           "displayName" : {
+            "type" : "string"
+          },
+          "firstName" : {
+            "type" : "string"
+          },
+          "lastName" : {
+            "type" : "string"
+          },
+          "locale" : {
+            "type" : "string"
+          },
+          "notificationPreference" : {
+            "enum" : [ "EMAIL", "PUSH", "NONE" ],
+            "type" : "string"
+          },
+          "phone" : {
+            "pattern" : ".*\\S.*",
+            "type" : "string"
+          },
+          "timezone" : {
             "type" : "string"
           }
         },
