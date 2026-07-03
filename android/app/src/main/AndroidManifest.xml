@@ -50,4 +50,21 @@
          The web fallback (browser navigator.geolocation) never reads this manifest. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- OSK-150 — push notifications (@capacitor/push-notifications).
+         POST_NOTIFICATIONS is the Android 13+ (API 33+) RUNTIME permission required to
+         show notifications at all; the plugin's requestPermissions() (driven by
+         web/push-client.js) prompts for it. Declaring it here only makes it requestable
+         — the actual grant is a runtime prompt; on Android 12 and below there is no
+         prompt and it is granted implicitly. The plugin's own manifest additionally
+         merges in the FirebaseMessagingService, so no <service> is declared here.
+
+         NOTE — live delivery is gated on OSK-165 (HUMAN): actually receiving a push also
+         needs Firebase Cloud Messaging enabled and android/app/google-services.json
+         present (that file is a per-project config the human adds; it is deliberately NOT
+         committed). android/app/build.gradle applies the google-services plugin ONLY when
+         that JSON exists, so the APK still builds without it and the client degrades
+         gracefully (a registrationError, handled by push-client.js) until OSK-165 lands.
+         The web fallback path (plain browser) never reads this manifest. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>
