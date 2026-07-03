@@ -10,6 +10,12 @@ For the full gcloud sequences see [`infra/cloud-sql.md`](../infra/cloud-sql.md) 
 [`infra/gcp/cloud-run.md`](../infra/gcp/cloud-run.md). Project `openskeleton-one`,
 runtime SA `476227744481-compute@developer.gserviceaccount.com`.
 
+> **Scope:** this is the narrow runtime-IAM checklist only. For the full ordered
+> wave-−1 human bring-up (auth, billing, project, deploy SA/WIF, Cloud SQL,
+> Firebase, org policy, GitHub settings) see
+> [`docs/agents/BRINGUP-RUNBOOK.md`](agents/BRINGUP-RUNBOOK.md) — the two grants
+> below are also §3 of that runbook.
+
 ## Runtime service-account grants (apply on every rebuild)
 
 - [ ] **DB secret accessor** — runtime SA gets `roles/secretmanager.secretAccessor`
