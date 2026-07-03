@@ -1,5 +1,6 @@
 package io.openskeleton.backend.notification;
 
+import io.openskeleton.backend.push.PushData;
 import java.util.Map;
 import org.springframework.lang.Nullable;
 
@@ -13,7 +14,7 @@ import org.springframework.lang.Nullable;
  *       email body. ({@code data} is not used by the email channel.)</li>
  *   <li><b>PUSH</b> — {@code subject} becomes the push <i>title</i>, {@code body} the push
  *       body, and {@code data} is passed through to FCM unchanged (including the
- *       {@code route} deep-link key — OSK-166).</li>
+ *       {@link PushData#ROUTE} deep-link key — OSK-166).</li>
  * </ul>
  *
  * <p>Kept a plain immutable record with no behaviour so producers can construct one without
@@ -24,8 +25,8 @@ import org.springframework.lang.Nullable;
  *     must be non-null/non-blank — a notification with nothing to say is a programming error
  * @param body the main body text shown to the user; must be non-null (may be empty)
  * @param data optional key/value payload delivered alongside a PUSH notification (supports
- *     the {@code route} deep-link key — OSK-166); passed through to FCM verbatim and ignored
- *     by the email channel. May be {@code null}, meaning "no data payload".
+ *     the {@link PushData#ROUTE} deep-link key — OSK-166); passed through to FCM verbatim and
+ *     ignored by the email channel. May be {@code null}, meaning "no data payload".
  */
 public record Notification(String subject, String body, @Nullable Map<String, String> data) {
 
@@ -57,15 +58,38 @@ public record Notification(String subject, String body, @Nullable Map<String, St
 
     /**
      * Convenience factory for a notification carrying a client-side deep-link {@code route}
-     * (OSK-166). The route is placed into the {@code data} payload under the {@code "route"}
-     * key so a PUSH recipient can deep-link; it is inert on the email channel.
+     * (OSK-166). The route is placed into the {@code data} payload under the
+     * {@link PushData#ROUTE} key so a PUSH recipient can deep-link into the right in-app
+     * screen (paired with the mobile tap-handler OSK-156); it is inert on the email channel.
+     *
+     * <p>The route is validated here — the single construction point — so a malformed route
+     * can never reach the FCM {@code data} map: a {@code null} or blank route is a programming
+     * error and is rejected, rather than silently shipping an empty {@code route} key that the
+     * client cannot navigate to.
      *
      * @param subject the title/subject line
      * @param body the body text
-     * @param route the deep-link route to attach under the {@code "route"} data key
-     * @return a {@link Notification} whose {@code data} carries {@code {"route": route}}
+     * @param route the deep-link route to attach under the {@link PushData#ROUTE} data key;
+     *     must be non-null and non-blank
+     * @return a {@link Notification} whose {@code data} carries {@code {ROUTE: route}}
+     * @throws IllegalArgumentException if {@code route} is null or blank
      */
     public static Notification withRoute(String subject, String body, String route) {
-        return new Notification(subject, body, Map.of("route", route));
+        if (route == null || route.isBlank()) {
+            throw new IllegalArgumentException("notification route must not be null/blank");
+        }
+        return new Notification(subject, body, Map.of(PushData.ROUTE, route));
+    }
+
+    /**
+     * The deep-link route carried by this notification (OSK-166), or {@code null} when none is
+     * set. A first-class accessor over the {@link PushData#ROUTE} entry of {@link #data} so
+     * callers can read the route without knowing the {@code data}-map key convention.
+     *
+     * @return the value of the {@link PushData#ROUTE} data entry, or {@code null} if this
+     *     notification carries no data map or no route key
+     */
+    @Nullable public String route() {
+        return data == null ? null : data.get(PushData.ROUTE);
     }
 }

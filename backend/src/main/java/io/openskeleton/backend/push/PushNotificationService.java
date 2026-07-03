@@ -33,9 +33,9 @@ import org.springframework.stereotype.Service;
  * <ol>
  *   <li>Look up the user's device tokens ({@link DeviceTokenRepository#findByUserId}).</li>
  *   <li>Build ONE {@link MulticastMessage}: a {@link Notification} (title/body) plus the
- *       caller's {@code data} map passed through unchanged — including the {@code route}
- *       key used for client-side deep-linking (OSK-166), which this service does not
- *       interpret.</li>
+ *       caller's {@code data} map passed through unchanged — including the {@link PushData#ROUTE}
+ *       key used for client-side deep-linking (OSK-166), which this service forwards verbatim
+ *       and never interprets.</li>
  *   <li>Send it with {@link FirebaseMessaging#sendEachForMulticast(MulticastMessage)} — the
  *       current multicast API in firebase-admin 9.9.0 (it fans out to one request per token
  *       and returns a per-token {@link BatchResponse}, index-aligned with the input
@@ -100,8 +100,9 @@ public class PushNotificationService {
      * @param title the notification title shown on the device
      * @param body the notification body shown on the device
      * @param data optional key/value payload delivered alongside the notification; passed
-     *     to FCM unchanged (supports the {@code route} deep-link key — OSK-166). May be
-     *     {@code null} or empty, in which case no data payload is attached.
+     *     to FCM unchanged (supports the {@link PushData#ROUTE} deep-link key — OSK-166). May
+     *     be {@code null} or empty, in which case no data payload is attached (so no
+     *     {@link PushData#ROUTE} key is sent).
      */
     public void sendToUser(UUID userId, String title, String body, @Nullable Map<String, String> data) {
         // Degradation path #1: FCM not enabled / no credentials — nothing to send through.
@@ -143,7 +144,9 @@ public class PushNotificationService {
 
     /**
      * Assemble the multicast message. The {@code data} map is attached only when non-empty
-     * and is passed through verbatim (including any {@code route} deep-link key).
+     * and is passed through verbatim (including any {@link PushData#ROUTE} deep-link key), so
+     * a {@link PushData#ROUTE} entry present on the caller's map always reaches the FCM
+     * {@code data}, and is omitted cleanly when the map is null/empty.
      */
     private static MulticastMessage buildMessage(
             List<String> tokens, String title, String body, @Nullable Map<String, String> data) {

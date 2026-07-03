@@ -102,6 +102,35 @@ class PushNotificationServiceTest {
         assertThat(dataOf(message)).isEmpty();
     }
 
+    // --- deep-link route contract (OSK-166) ------------------------------------------
+
+    @Test
+    void routeKeyReachesTheFcmMessageDataWhenSet() throws Exception {
+        when(deviceTokenRepository.findByUserId(USER_ID)).thenReturn(List.of(device("token-a")));
+        BatchResponse sendResult = batch(success());
+        when(firebaseMessaging.sendEachForMulticast(any())).thenReturn(sendResult);
+
+        // A route set on the caller's data map must land in the built message under the
+        // documented PushData.ROUTE key, verbatim, so the client can deep-link on tap.
+        service.sendToUser(USER_ID, "t", "b", Map.of(PushData.ROUTE, "/messages/42"));
+
+        MulticastMessage message = captureSentMessage();
+        assertThat(dataOf(message)).containsEntry(PushData.ROUTE, "/messages/42");
+    }
+
+    @Test
+    void noRouteKeyWhenDataIsNull() throws Exception {
+        when(deviceTokenRepository.findByUserId(USER_ID)).thenReturn(List.of(device("token-a")));
+        BatchResponse sendResult = batch(success());
+        when(firebaseMessaging.sendEachForMulticast(any())).thenReturn(sendResult);
+
+        // No data -> the route key is omitted cleanly (not an empty/blank "route" entry).
+        service.sendToUser(USER_ID, "t", "b", null);
+
+        MulticastMessage message = captureSentMessage();
+        assertThat(dataOf(message)).doesNotContainKey(PushData.ROUTE);
+    }
+
     // --- dead-token pruning ----------------------------------------------------------
 
     @Test
