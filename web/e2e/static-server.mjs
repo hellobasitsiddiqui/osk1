@@ -45,6 +45,7 @@ const REWRITES = {
   "/ops": "/ops.html",
   "/help": "/help.html",
   "/app": "/app.html",
+  "/history": "/history.html",
 };
 
 // Resolve a request URL path to an absolute file path INSIDE ROOT, or null if the
