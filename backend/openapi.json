@@ -29,12 +29,37 @@
         },
         "type" : "object"
       },
+      "DeviceResponse" : {
+        "properties" : {
+          "platform" : {
+            "type" : "string"
+          },
+          "token" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "Health" : {
         "properties" : {
           "status" : {
             "type" : "string"
           }
         },
+        "type" : "object"
+      },
+      "RegisterDeviceRequest" : {
+        "properties" : {
+          "platform" : {
+            "enum" : [ "ANDROID", "IOS", "WEB" ],
+            "type" : "string"
+          },
+          "token" : {
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "required" : [ "platform" ],
         "type" : "object"
       },
       "UpdateProfileRequest" : {
@@ -131,6 +156,53 @@
           }
         },
         "tags" : [ "me-controller" ]
+      }
+    },
+    "/api/v1/me/devices" : {
+      "post" : {
+        "operationId" : "register",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RegisterDeviceRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/DeviceResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "device-controller" ]
+      }
+    },
+    "/api/v1/me/devices/{token}" : {
+      "delete" : {
+        "operationId" : "deregister",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "token",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "204" : {
+            "description" : "No Content"
+          }
+        },
+        "tags" : [ "device-controller" ]
       }
     },
     "/health" : {
