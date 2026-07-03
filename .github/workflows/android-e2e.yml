@@ -181,7 +181,10 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none
           script: |
-            set -euo pipefail
+            # NB: android-emulator-runner executes this via `sh` (dash), which does not
+            # support `set -o pipefail` ("Illegal option -o pipefail"). Use `set -eu` —
+            # -e/-u are dash-supported and the flow uses no failure-critical pipelines.
+            set -eu
             mkdir -p "$SCREENSHOT_DIR"
 
             echo "::group::Install + launch the debug APK"
