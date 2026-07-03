@@ -231,6 +231,14 @@
 						     TokenVerifier seam exists so the rest of the auth path IS
 						     tested with a mock. Exclude only this untestable adapter. -->
 						<exclude>**/auth/FirebaseTokenVerifier.class</exclude>
+						<!-- PushConfig (OSK-155) is the same shape: pure Firebase SDK
+						     lookup that reuses the auth FirebaseApp and hands back a
+						     FirebaseMessaging (or null when FCM is not enabled). It cannot
+						     be exercised without live credentials, so — like the verifier
+						     above — it is excluded, while the real, branch-heavy send/prune
+						     logic in PushNotificationService IS unit-tested with a mocked
+						     FirebaseMessaging. -->
+						<exclude>**/push/PushConfig.class</exclude>
 					</excludes>
 				</configuration>
 				<executions>
