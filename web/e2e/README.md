@@ -19,6 +19,7 @@ web/e2e/
 ├── playwright.config.ts   # headless Chromium; boots the static server; baseURL; projects
 ├── static-server.mjs      # zero-dep static server, mirrors firebase.json rewrites
 ├── auth-guard.simulation.cjs   # headless Node sim of the OSK-74 guard (no browser)
+├── social-login.simulation.cjs # headless Node sim of OSK-131 social/federated logins
 ├── completion-gate.simulation.cjs # headless Node sim of the OSK-136 first-login gate
 ├── badges.simulation.cjs       # headless Node sim of the OSK-70 account-state badges
 ├── history.simulation.cjs      # headless Node sim of the OSK-101 profile-history view
@@ -96,6 +97,37 @@ it without needing a live Firebase sign-in (which requires the human apiKey/appI
 
 When OSK-92 supplies the apiKey/appId, a real **cold-login** walkthrough can drop in as a
 new `tests/*.spec.ts` using this same harness — no infra change.
+
+## Social / federated logins (OSK-131) — headless simulation
+
+`web/app.html` offers additional federated sign-in providers (Google, plus **Facebook**
+and **Apple**, structured so more are trivial) alongside email/password. A **live** run is
+impossible in CI — each provider must be **enabled in the Firebase console** (client
+IDs/secrets, a HUMAN step) and the flow needs a real popup + OAuth round-trip — so the
+non-OAuth surface is covered headlessly:
+
+- **`social-login.simulation.cjs`** — a zero-dependency Node script that `require()`s the
+  **pure** provider helpers `auth.js` exports and asserts, with a **stubbed Firebase**
+  namespace and fake button elements (no browser, no network):
+  - **config-gating** — `enabledProviders` / `isProviderEnabled` reflect
+    `config.firebase.providers` (Google on by default; Facebook/Apple only when toggled
+    on **and** the apiKey is present), and the **committed** `config.js` ships _Google
+    only_ so unconfigured providers never render a broken button;
+  - **button rendering** — `applyProviderVisibility` reveals exactly the enabled
+    providers' buttons and hides the rest;
+  - **per-provider sign-in call** — the shared builder constructs the right Firebase
+    provider per id (`GoogleAuthProvider` / `FacebookAuthProvider` /
+    `OAuthProvider("apple.com")` with the right scopes) and a stubbed `signInWithPopup`
+    resolves — the exact path the browser's `signInWithProvider` runs; disabled/unknown
+    providers are refused before any popup opens; and
+  - **error handling** — `describeAuthError` maps the codes the OAuth flow produces,
+    including `account-exists-with-different-credential` and `popup-closed-by-user`, to
+    friendly, provider-personalised copy.
+
+  Run it with `node social-login.simulation.cjs` (exits non-zero on any failure).
+
+Enabling Facebook/Apple is a console step (see `config.js` `firebase.providers`); once a
+provider is enabled there and its toggle flipped, its button appears — no harness change.
 
 ## Account-state badges (OSK-70) — headless simulation
 

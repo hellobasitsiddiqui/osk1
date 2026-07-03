@@ -173,9 +173,15 @@
         color: #fff; background: var(--accent); border-color: transparent;
       }
       .btn--primary:hover:not([disabled]) { filter: brightness(1.08); }
-      .btn--google { width: 100%; color: var(--fg); background: transparent; }
-      .btn--google:hover:not([disabled]) { border-color: var(--muted); }
-      .btn--google__icon { width: 18px; height: 18px; flex: 0 0 auto; }
+      /* OSK-131: shared style for every federated / social provider button (Google,
+         Facebook, Apple, …). Neutral outlined look so each brand's inline-SVG icon
+         supplies the only colour — consistent + theme-friendly on the dark UI. */
+      .btn--provider { width: 100%; color: var(--fg); background: transparent; }
+      .btn--provider:hover:not([disabled]) { border-color: var(--muted); }
+      .btn--provider__icon { width: 18px; height: 18px; flex: 0 0 auto; }
+      /* Provider buttons stack with a small gap; each is hidden until the guard
+         reveals the ones CONFIGURED in config.firebase.providers (OSK-131). */
+      .providers { display: grid; gap: 0.6rem; }
       .btn--ghost {
         color: var(--muted); background: transparent;
         min-height: 0; padding: 0.4rem 0.8rem; font-weight: 500; font-size: 0.85rem;
@@ -476,16 +482,44 @@
 
         <div class="divider" aria-hidden="true">or</div>
 
-        <button id="google-btn" class="btn btn--google" type="button">
-          <!-- Inline Google "G" glyph (self-contained, no external image). -->
-          <svg class="btn--google__icon" viewBox="0 0 18 18" aria-hidden="true">
-            <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
-            <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
-            <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/>
-            <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
-          </svg>
-          Sign in with Google
-        </button>
+        <!--
+          OSK-131: federated / social sign-in buttons. Each is STATIC markup so its
+          brand icon is inline + XSS-safe (no innerHTML anywhere), but each starts
+          `hidden`; the guard script below reveals ONLY the providers CONFIGURED in
+          window.__APP_CONFIG__.firebase.providers (see config.js), so an unconfigured
+          provider never shows a button that would fail. `data-provider` is the id the
+          guard maps to window.OSKAuth.signInWithProvider(). Google keeps id="google-btn"
+          (the onboarding tour, tour.js, points a coachmark at it). Adding a provider =
+          one more <button data-provider> here + a registry entry in auth.js + a toggle.
+        -->
+        <div id="social-providers" class="providers">
+          <button id="google-btn" class="btn btn--provider" type="button" data-provider="google" hidden>
+            <!-- Inline Google "G" glyph (self-contained, no external image). -->
+            <svg class="btn--provider__icon" viewBox="0 0 18 18" aria-hidden="true">
+              <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+              <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
+              <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/>
+              <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+            </svg>
+            Continue with Google
+          </button>
+
+          <button id="facebook-btn" class="btn btn--provider" type="button" data-provider="facebook" hidden>
+            <!-- Inline Facebook "f" glyph (brand blue #1877F2, self-contained). -->
+            <svg class="btn--provider__icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="#1877F2" d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.97h-1.51c-1.49 0-1.95.93-1.95 1.89v2.25h3.32l-.53 3.49h-2.79V24C19.61 23.1 24 18.1 24 12.07z"/>
+            </svg>
+            Continue with Facebook
+          </button>
+
+          <button id="apple-btn" class="btn btn--provider" type="button" data-provider="apple" hidden>
+            <!-- Inline Apple logo (uses currentColor so it reads on either theme). -->
+            <svg class="btn--provider__icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M17.05 12.54c-.03-2.9 2.37-4.29 2.47-4.36-1.35-1.97-3.45-2.24-4.2-2.27-1.79-.18-3.49 1.05-4.4 1.05-.9 0-2.3-1.03-3.78-1-1.94.03-3.74 1.13-4.74 2.87-2.02 3.5-.52 8.69 1.45 11.53.96 1.39 2.11 2.95 3.61 2.9 1.45-.06 2-.94 3.75-.94 1.74 0 2.24.94 3.77.91 1.56-.03 2.54-1.42 3.49-2.82 1.1-1.61 1.55-3.17 1.58-3.25-.03-.02-3.03-1.16-3.06-4.6zM14.2 4.06c.8-.97 1.34-2.31 1.19-3.65-1.15.05-2.54.77-3.36 1.73-.74.85-1.38 2.22-1.21 3.53 1.28.1 2.59-.65 3.38-1.61z"/>
+            </svg>
+            Continue with Apple
+          </button>
+        </div>
 
         <p id="signin-error" class="form-error" role="alert" hidden></p>
       </section>
@@ -571,8 +605,20 @@
         var emailEl = document.getElementById("signin-email");
         var passwordEl = document.getElementById("signin-password");
         var submitBtn = document.getElementById("signin-submit");
-        var googleBtn = document.getElementById("google-btn");
         var signoutBtn = document.getElementById("signout-btn");
+
+        // OSK-131: the federated provider buttons, discovered by their data-provider
+        // id (no hard-coded per-provider list here — this stays in step with the HTML
+        // and the auth.js registry). `providersById` maps id -> button element, used to
+        // gate which buttons are shown for the configured providers.
+        var providerButtons = Array.prototype.slice.call(
+          document.querySelectorAll("#social-providers [data-provider]")
+        );
+        var providersById = {};
+        providerButtons.forEach(function (btn) {
+          var id = btn.getAttribute("data-provider");
+          if (id) { providersById[id] = btn; }
+        });
         var profileStatus = document.getElementById("profile-status");
         var profileFields = document.getElementById("profile-fields");
 
@@ -586,10 +632,11 @@
         function clearError() { showError(""); }
 
         // Enable/disable the sign-in buttons while a request is in flight, so a user
-        // can't fire two popups / double-submit.
+        // can't fire two popups / double-submit. Covers the email/password submit AND
+        // every federated provider button (OSK-131).
         function setBusy(busy) {
           if (submitBtn) { submitBtn.disabled = busy; }
-          if (googleBtn) { googleBtn.disabled = busy; }
+          providerButtons.forEach(function (btn) { btn.disabled = busy; });
         }
 
         // Remove every child of a node without innerHTML (keeps us strictly XSS-safe).
@@ -719,18 +766,30 @@
           });
         }
 
-        if (googleBtn) {
-          googleBtn.addEventListener("click", function () {
+        // OSK-131: reveal ONLY the provider buttons whose provider is configured
+        // (config.firebase.providers), then wire each to the generic popup sign-in. The
+        // config is static so visibility is computed once. Every provider shares the
+        // same OSKAuth.describeAuthError copy, so account-exists-with-different-credential
+        // and popup-closed read the same friendly way regardless of which button fired.
+        A.applyProviderVisibility(providersById);
+        var providerMeta = A.AUTH_PROVIDERS || [];
+        providerButtons.forEach(function (btn) {
+          var id = btn.getAttribute("data-provider");
+          // The human label for this id (from the auth.js registry), falling back to
+          // the id itself so a button always has *some* name in error copy.
+          var label = id;
+          for (var i = 0; i < providerMeta.length; i++) {
+            if (providerMeta[i].id === id) { label = providerMeta[i].label; break; }
+          }
+          btn.addEventListener("click", function () {
             clearError();
             setBusy(true);
-            A.signInWithGoogle()
-              .then(function () { clearError(); })
-              .catch(function (err) {
-                showError((err && err.message) ? err.message : "Google sign-in failed.");
-              })
+            A.signInWithProvider(id)
+              .then(function () { clearError(); /* render() runs via auth-state change */ })
+              .catch(function (err) { showError(A.describeAuthError(err, label)); })
               .then(function () { setBusy(false); });
           });
-        }
+        });
 
         if (signoutBtn) {
           signoutBtn.addEventListener("click", function () {
