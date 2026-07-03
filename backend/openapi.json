@@ -122,33 +122,6 @@
         },
         "type" : "object"
       },
-      "PagedResponseUserSummary" : {
-        "properties" : {
-          "items" : {
-            "items" : {
-              "$ref" : "#/components/schemas/UserSummary"
-            },
-            "type" : "array"
-          },
-          "page" : {
-            "format" : "int32",
-            "type" : "integer"
-          },
-          "size" : {
-            "format" : "int32",
-            "type" : "integer"
-          },
-          "totalElements" : {
-            "format" : "int64",
-            "type" : "integer"
-          },
-          "totalPages" : {
-            "format" : "int32",
-            "type" : "integer"
-          }
-        },
-        "type" : "object"
-      },
       "ProfileChange" : {
         "properties" : {
           "actor" : {
@@ -184,13 +157,18 @@
         "required" : [ "platform" ],
         "type" : "object"
       },
-      "UpdateEnabledRequest" : {
+      "ResendVerificationResponse" : {
         "properties" : {
-          "enabled" : {
+          "email" : {
+            "type" : "string"
+          },
+          "emailVerified" : {
+            "type" : "boolean"
+          },
+          "verificationSent" : {
             "type" : "boolean"
           }
         },
-        "required" : [ "enabled" ],
         "type" : "object"
       },
       "UpdateProfileRequest" : {
@@ -230,44 +208,6 @@
         },
         "type" : "object"
       },
-      "UpdateRoleRequest" : {
-        "properties" : {
-          "role" : {
-            "enum" : [ "USER", "ADMIN" ],
-            "type" : "string"
-          }
-        },
-        "required" : [ "role" ],
-        "type" : "object"
-      },
-      "UserSummary" : {
-        "properties" : {
-          "accountType" : {
-            "type" : "string"
-          },
-          "createdAt" : {
-            "format" : "date-time",
-            "type" : "string"
-          },
-          "displayName" : {
-            "type" : "string"
-          },
-          "email" : {
-            "type" : "string"
-          },
-          "enabled" : {
-            "type" : "boolean"
-          },
-          "id" : {
-            "format" : "uuid",
-            "type" : "string"
-          },
-          "role" : {
-            "type" : "string"
-          }
-        },
-        "type" : "object"
-      },
       "Version" : {
         "properties" : {
           "buildTime" : {
@@ -294,133 +234,6 @@
   },
   "openapi" : "3.1.0",
   "paths" : {
-    "/api/v1/admin/users" : {
-      "get" : {
-        "operationId" : "listUsers",
-        "parameters" : [ {
-          "in" : "query",
-          "name" : "pageable",
-          "required" : true,
-          "schema" : {
-            "$ref" : "#/components/schemas/Pageable"
-          }
-        } ],
-        "responses" : {
-          "200" : {
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/PagedResponseUserSummary"
-                }
-              }
-            },
-            "description" : "OK"
-          }
-        },
-        "tags" : [ "admin-user-controller" ]
-      }
-    },
-    "/api/v1/admin/users/{id}" : {
-      "get" : {
-        "operationId" : "getUser",
-        "parameters" : [ {
-          "in" : "path",
-          "name" : "id",
-          "required" : true,
-          "schema" : {
-            "format" : "uuid",
-            "type" : "string"
-          }
-        } ],
-        "responses" : {
-          "200" : {
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/UserSummary"
-                }
-              }
-            },
-            "description" : "OK"
-          }
-        },
-        "tags" : [ "admin-user-controller" ]
-      }
-    },
-    "/api/v1/admin/users/{id}/enabled" : {
-      "patch" : {
-        "operationId" : "updateEnabled",
-        "parameters" : [ {
-          "in" : "path",
-          "name" : "id",
-          "required" : true,
-          "schema" : {
-            "format" : "uuid",
-            "type" : "string"
-          }
-        } ],
-        "requestBody" : {
-          "content" : {
-            "application/json" : {
-              "schema" : {
-                "$ref" : "#/components/schemas/UpdateEnabledRequest"
-              }
-            }
-          },
-          "required" : true
-        },
-        "responses" : {
-          "200" : {
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/UserSummary"
-                }
-              }
-            },
-            "description" : "OK"
-          }
-        },
-        "tags" : [ "admin-user-controller" ]
-      }
-    },
-    "/api/v1/admin/users/{id}/role" : {
-      "patch" : {
-        "operationId" : "updateRole",
-        "parameters" : [ {
-          "in" : "path",
-          "name" : "id",
-          "required" : true,
-          "schema" : {
-            "format" : "uuid",
-            "type" : "string"
-          }
-        } ],
-        "requestBody" : {
-          "content" : {
-            "application/json" : {
-              "schema" : {
-                "$ref" : "#/components/schemas/UpdateRoleRequest"
-              }
-            }
-          },
-          "required" : true
-        },
-        "responses" : {
-          "200" : {
-            "content" : {
-              "*/*" : {
-                "schema" : {
-                  "$ref" : "#/components/schemas/UserSummary"
-                }
-              }
-            },
-            "description" : "OK"
-          }
-        },
-        "tags" : [ "admin-user-controller" ]
-      }
-    },
     "/api/v1/info" : {
       "get" : {
         "operationId" : "info",
@@ -528,6 +341,24 @@
           }
         },
         "tags" : [ "device-controller" ]
+      }
+    },
+    "/api/v1/me/email/resend-verification" : {
+      "post" : {
+        "operationId" : "resendVerification",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ResendVerificationResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "email-verification-controller" ]
       }
     },
     "/api/v1/me/history" : {
