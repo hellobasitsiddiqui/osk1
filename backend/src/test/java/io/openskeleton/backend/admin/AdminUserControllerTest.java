@@ -9,12 +9,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import io.openskeleton.backend.audit.AuditAction;
+import io.openskeleton.backend.audit.AuditEvent;
+import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.auth.TokenVerifier;
 import io.openskeleton.backend.auth.TokenVerifier.VerifiedToken;
 import io.openskeleton.backend.user.AccountType;
+import io.openskeleton.backend.user.NotificationPreference;
 import io.openskeleton.backend.user.User;
 import io.openskeleton.backend.user.User.Role;
 import io.openskeleton.backend.user.UserRepository;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +28,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -59,6 +66,9 @@ class AdminUserControllerTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private AuditService auditService;
 
     @MockBean
     private TokenVerifier tokenVerifier;
@@ -304,5 +314,201 @@ class AdminUserControllerTest {
         // Guards the DTO mapping's accountType default against silent drift.
         assertThat(userRepository.findById(aliceId).orElseThrow().getAccountType())
                 .isEqualTo(AccountType.REAL);
+    }
+
+    // --- OSK-85: view + edit another user's profile fields --------------------------------
+
+    private static final String PROFILE_SUFFIX = "/profile";
+
+    @Test
+    void adminGetOneReturnsTheFullProfileFields() throws Exception {
+        // Seed Alice with a full profile so the detail endpoint has something to expose.
+        User alice = userRepository.findById(aliceId).orElseThrow();
+        alice.setFirstName("Alice");
+        alice.setLastName("Anderson");
+        alice.setCity("London");
+        alice.setAge(29);
+        alice.setPhone("+15551230000");
+        alice.setNotificationPreference(NotificationPreference.PUSH);
+        alice.setTimezone("Europe/London");
+        alice.setLocale("en-GB");
+        userRepository.save(alice);
+
+        mvc.perform(get(USERS_PATH + "/" + aliceId).header(HttpHeaders.AUTHORIZATION, bearer(ADMIN_TOKEN)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(aliceId.toString()))
+                // The OSK-71 summary fields are still present…
+                .andExpect(jsonPath("$.email").value("alice@example.com"))
+                .andExpect(jsonPath("$.role").value("USER"))
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.accountType").value("REAL"))
+                // …plus the OSK-67 profile fields (OSK-85).
+                .andExpect(jsonPath("$.firstName").value("Alice"))
+                .andExpect(jsonPath("$.lastName").value("Anderson"))
+                .andExpect(jsonPath("$.city").value("London"))
+                .andExpect(jsonPath("$.age").value(29))
+                .andExpect(jsonPath("$.phone").value("+15551230000"))
+                .andExpect(jsonPath("$.notificationPreference").value("PUSH"))
+                .andExpect(jsonPath("$.timezone").value("Europe/London"))
+                .andExpect(jsonPath("$.locale").value("en-GB"));
+    }
+
+    @Test
+    void adminEditsAnotherUsersProfilePersistsReflectsInResponseAndRecordsAudit() throws Exception {
+        String body =
+                """
+                {
+                  "displayName": "Alice A.",
+                  "firstName": "Alice",
+                  "lastName": "Anderson",
+                  "city": "Paris",
+                  "age": 34,
+                  "phone": "+15559998888",
+                  "notificationPreference": "PUSH",
+                  "timezone": "Europe/Paris",
+                  "locale": "fr-FR"
+                }
+                """;
+
+        // The response echoes the persisted detail (so the web console can reflect the update).
+        mvc.perform(patch(USERS_PATH + "/" + aliceId + PROFILE_SUFFIX)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(ADMIN_TOKEN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(aliceId.toString()))
+                .andExpect(jsonPath("$.displayName").value("Alice A."))
+                .andExpect(jsonPath("$.firstName").value("Alice"))
+                .andExpect(jsonPath("$.city").value("Paris"))
+                .andExpect(jsonPath("$.age").value(34))
+                .andExpect(jsonPath("$.phone").value("+15559998888"))
+                .andExpect(jsonPath("$.notificationPreference").value("PUSH"))
+                .andExpect(jsonPath("$.timezone").value("Europe/Paris"))
+                .andExpect(jsonPath("$.locale").value("fr-FR"));
+
+        // Persisted to the real database, not just echoed.
+        User persisted = userRepository.findById(aliceId).orElseThrow();
+        assertThat(persisted.getDisplayName()).isEqualTo("Alice A.");
+        assertThat(persisted.getCity()).isEqualTo("Paris");
+        assertThat(persisted.getAge()).isEqualTo(34);
+        assertThat(persisted.getNotificationPreference()).isEqualTo(NotificationPreference.PUSH);
+        assertThat(persisted.getTimezone()).isEqualTo("Europe/Paris");
+        assertThat(persisted.getLocale()).isEqualTo("fr-FR");
+
+        // A single PROFILE_EDITED audit event, actor = the admin, target = the edited user, with
+        // the changed fields captured in metadata as {field: {old, new}}.
+        List<AuditEvent> events = auditService
+                .findEvents(aliceId.toString(), AuditAction.PROFILE_EDITED, PageRequest.of(0, 10))
+                .getContent();
+        assertThat(events).hasSize(1);
+        AuditEvent event = events.get(0);
+        assertThat(event.getActorFirebaseUid()).isEqualTo("admin-uid");
+        assertThat(event.getTargetId()).isEqualTo(aliceId.toString());
+        Map<String, Object> metadata = event.getMetadata();
+        assertThat(metadata).containsKeys("city", "age", "notificationPreference");
+        // Alice started with displayName "Alice" and null city, so the {old, new} is captured.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> cityDelta = (Map<String, Object>) metadata.get("city");
+        assertThat(cityDelta.get("old")).isNull();
+        assertThat(cityDelta.get("new")).isEqualTo("Paris");
+    }
+
+    @Test
+    void adminEditProfileIsSparseAndSkipsUnchangedValues() throws Exception {
+        // First set city only.
+        mvc.perform(patch(USERS_PATH + "/" + aliceId + PROFILE_SUFFIX)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(ADMIN_TOKEN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"city\":\"Berlin\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.city").value("Berlin"));
+
+        // A second PATCH that re-submits the SAME city plus a new firstName: city is unchanged
+        // (skipped, no audit delta), firstName is a genuine change.
+        mvc.perform(patch(USERS_PATH + "/" + aliceId + PROFILE_SUFFIX)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(ADMIN_TOKEN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"city\":\"Berlin\",\"firstName\":\"Ada\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.city").value("Berlin"))
+                .andExpect(jsonPath("$.firstName").value("Ada"));
+
+        assertThat(userRepository.findById(aliceId).orElseThrow().getFirstName())
+                .isEqualTo("Ada");
+
+        // Two PROFILE_EDITED events (one per PATCH that changed something); the second event's
+        // metadata carries firstName but NOT city (unchanged → no delta).
+        List<AuditEvent> events = auditService
+                .findEvents(aliceId.toString(), AuditAction.PROFILE_EDITED, PageRequest.of(0, 10))
+                .getContent();
+        assertThat(events).hasSize(2);
+    }
+
+    @Test
+    void adminEditProfileNoGenuineChangeIsANoOpWithoutAudit() throws Exception {
+        // Alice's seeded displayName is already "Alice"; re-submitting it changes nothing.
+        mvc.perform(patch(USERS_PATH + "/" + aliceId + PROFILE_SUFFIX)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(ADMIN_TOKEN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"Alice\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.displayName").value("Alice"));
+
+        // No genuine change → no audit event recorded.
+        assertThat(auditService
+                        .findEvents(aliceId.toString(), AuditAction.PROFILE_EDITED, PageRequest.of(0, 10))
+                        .getTotalElements())
+                .isZero();
+    }
+
+    @Test
+    void nonAdminEditingProfileIsForbidden403AndLeavesTheUserUntouched() throws Exception {
+        mvc.perform(patch(USERS_PATH + "/" + aliceId + PROFILE_SUFFIX)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(USER_TOKEN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"city\":\"Rome\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(403));
+
+        assertThat(userRepository.findById(aliceId).orElseThrow().getCity()).isNull();
+    }
+
+    @Test
+    void adminEditingProfileOfUnknownUserGets404() throws Exception {
+        mvc.perform(patch(USERS_PATH + "/" + UUID.randomUUID() + PROFILE_SUFFIX)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(ADMIN_TOKEN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"city\":\"Rome\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(404));
+    }
+
+    @Test
+    void adminEditingProfileWithOutOfRangeAgeGets400AndPersistsNothing() throws Exception {
+        mvc.perform(patch(USERS_PATH + "/" + aliceId + PROFILE_SUFFIX)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(ADMIN_TOKEN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"age\": 200}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.title").value("Bad Request"))
+                .andExpect(jsonPath("$.errors[0]").value(org.hamcrest.Matchers.containsString("age")));
+
+        // Rejected request touched nothing.
+        assertThat(userRepository.findById(aliceId).orElseThrow().getAge()).isNull();
+    }
+
+    @Test
+    void adminEditingProfileWithInvalidTimezoneGets400() throws Exception {
+        mvc.perform(patch(USERS_PATH + "/" + aliceId + PROFILE_SUFFIX)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(ADMIN_TOKEN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"timezone\": \"Mars/Phobos\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.errors[0]").value(org.hamcrest.Matchers.containsString("timezone")));
     }
 }
