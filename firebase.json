@@ -37,6 +37,10 @@
         "destination": "/history.html"
       },
       {
+        "source": "/diagnostics",
+        "destination": "/diagnostics.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

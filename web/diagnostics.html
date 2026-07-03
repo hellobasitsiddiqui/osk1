@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<!--
+  diagnostics.html — OpenSkeleton QA diagnostics screen (OSK-169).
+
+  A device-facing QA page that shows, at a glance, what the native shell is giving the web
+  app: the PLATFORM (native Capacitor vs plain web + the platform id), which expected
+  Capacitor PLUGINS are actually loaded (SplashScreen / Geolocation / PushNotifications),
+  the GPS permission + current coordinates (via the OSK-152 window.OSKGeolocation wrapper),
+  and the FCM push permission + registration token (via the OSK-150 window.OSKPush client),
+  with a copy-to-clipboard for the token.
+
+  Design choices (mirrors status.html / ops.html so the pages read as one product):
+  - Self-contained page: inlined CSS, shared dark palette + the OSK-127/171 "sketch" theme,
+    and the same ~640px responsive breakpoint. ZERO external CSS/font/CDN requests.
+  - Reuses the already-merged device wrappers rather than re-implementing plugin access:
+    geolocation.js publishes window.OSKGeolocation, push-client.js publishes window.OSKPush;
+    diagnostics.js aggregates + renders. All three are plain <script> includes (no bundler).
+  - Graceful degradation: off-device (plain browser) window.Capacitor is undefined, so the
+    platform reads "Web browser", every plugin reads "Not loaded", GPS falls back to the
+    browser API (or "unavailable"), and the FCM section shows a clear "not available /
+    FCM not configured (OSK-165)" state. Nothing throws; no plugin call is attempted.
+  - No prompts on load: the location + notification permission prompts fire ONLY when a QA
+    presses a "refresh" button, so simply opening the page never nags the user.
+  - XSS-safe: diagnostics.js writes every dynamic value with textContent only.
+
+  Routing: reachable at the clean path "/diagnostics" via a Firebase Hosting rewrite
+  ("/diagnostics" -> "/diagnostics.html", added to firebase.json ahead of the SPA
+  catch-all), the e2e static-server's matching rewrite, and directly at
+  "/diagnostics.html". Linked discreetly from the /ops footer.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenSkeleton Diagnostics</title>
+    <!-- Runtime config (same as the other pages): loaded so the OSK-171 theme switcher can
+         read window.__APP_CONFIG__.theme. diagnostics.js itself reads nothing from it. -->
+    <script src="/config.js"></script>
+    <!-- OSK-127: apply the persisted theme BEFORE first paint to avoid a flash of the wrong
+         theme. Only "sketch" is a non-default; anything else falls through to the default. -->
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem("osk-theme") === "sketch") {
+            document.documentElement.setAttribute("data-theme", "sketch");
+          }
+        } catch (e) {
+          /* localStorage unavailable — keep the default theme */
+        }
+      })();
+    </script>
+    <style>
+      /* Shared palette with status.html/ops.html so the pages read as one product. */
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --accent: #4c8bf5;
+        --muted: #8b949e;
+        --border: #30363d;
+        --panel: #161b22;
+        --ok: #3fb950; /* green — present / granted / located */
+        --warn: #d29922; /* amber — absent / not-yet / degraded */
+        --down: #f85149; /* red — denied / unavailable */
+        --pending: #8b949e; /* grey — still checking / idle */
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background: radial-gradient(circle at 50% 0%, #161b22 0%, var(--bg) 60%);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        line-height: 1.5;
+        padding: 2rem 1.25rem 3rem;
+      }
+      .wrap { max-width: 44rem; margin: 0 auto; }
+
+      /* --- Header (logo + title), echoing index.html's brand mark --------------- */
+      .head { display: flex; align-items: center; gap: 0.9rem; margin-bottom: 1.5rem; }
+      .logo {
+        width: 48px; height: 48px; flex: 0 0 auto;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--accent), #7c3aed);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.3rem; font-weight: 700; color: #fff;
+      }
+      h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.02em; }
+      .sub { color: var(--muted); margin: 0.15rem 0 0; font-size: 0.9rem; }
+
+      /* --- Panels --------------------------------------------------------------- */
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        padding: 1.1rem 1.25rem;
+        margin-bottom: 1.25rem;
+      }
+      .panel h2 {
+        font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--muted); margin: 0 0 0.85rem; font-weight: 600;
+      }
+      .panel__hint { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.85rem; }
+
+      /* --- Field rows (label + status dot + value) — reused across every panel -- */
+      .field {
+        display: flex; align-items: baseline; justify-content: space-between;
+        gap: 0.5rem 1rem;
+        padding: 0.55rem 0; border-top: 1px solid var(--border);
+      }
+      .field:first-of-type { border-top: 0; }
+      .field__label { color: var(--muted); font-size: 0.9rem; flex: 0 0 auto; }
+      .field__value {
+        display: flex; align-items: center; gap: 0.5rem;
+        font-size: 0.92rem; text-align: right; min-width: 0;
+        overflow-wrap: anywhere; /* long values wrap, never side-scroll */
+      }
+      /* A monospace value for machine-ish strings (the FCM token). break-all so a very
+         long token wraps hard rather than overflowing the panel. */
+      .field__value--mono {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        word-break: break-all; text-align: left; flex: 1 1 auto;
+      }
+
+      /* Status dots — same vocabulary as status.html. */
+      .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; background: var(--pending); }
+      .dot--ok { background: var(--ok); }
+      .dot--warn { background: var(--warn); }
+      .dot--down { background: var(--down); }
+      .dot--pending { background: var(--pending); }
+
+      /* --- Actions (refresh / copy buttons), styled like the shared toggle pill -- */
+      .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.9rem; }
+      .btn {
+        font: inherit;
+        font-size: 0.82rem;
+        line-height: 1.2;
+        color: var(--fg);
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.35rem 0.85rem;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      .btn:hover { border-color: var(--muted); }
+      .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .copy-status { color: var(--muted); font-size: 0.8rem; align-self: center; }
+
+      /* A muted "gated" note (the OSK-165 FCM gate call-out). */
+      .note {
+        margin: 0.9rem 0 0; padding: 0.6rem 0.75rem;
+        border: 1px dashed var(--border); border-radius: 8px;
+        color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere;
+      }
+
+      /* --- Footer --------------------------------------------------------------- */
+      .foot {
+        display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+        margin-top: 1.5rem; color: var(--muted); font-size: 0.8rem;
+      }
+      .foot a { color: var(--accent); text-decoration: none; }
+      .foot a:hover { text-decoration: underline; }
+      .foot__byline { flex-basis: 100%; margin-top: 0.35rem; color: var(--muted); }
+      .foot__byline a { color: var(--muted); text-decoration: none; }
+      .foot__byline a:hover { color: var(--accent); text-decoration: underline; }
+
+      /* OSK-117 mobile-web polish — the same ~640px phone breakpoint the other pages use. */
+      @media (max-width: 640px) {
+        body { padding: 1.5rem 1rem 2.5rem; }
+        h1 { font-size: 1.3rem; }
+        .panel { padding: 1rem; }
+        /* Let a long field wrap under its label rather than overflow. */
+        .field { flex-wrap: wrap; gap: 0.2rem 0.75rem; }
+        .field__value { text-align: left; }
+        .foot a { display: inline-block; padding: 0.25rem 0; }
+      }
+
+      /* OSK-127/171 theme toggle pill (footer). Reads the shared vars, so it re-skins. */
+      .theme-toggle {
+        font: inherit; font-size: 0.78rem; line-height: 1.2;
+        color: var(--muted); background: transparent;
+        border: 1px solid var(--border); border-radius: 999px;
+        padding: 0.3rem 0.75rem; margin-left: auto; cursor: pointer;
+        -webkit-appearance: none; appearance: none;
+      }
+      .theme-toggle:hover { color: var(--fg); border-color: var(--muted); }
+      .theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      /* ================================================================== *
+       * OSK-127 — selectable "sketch / blueprint" theme. Everything is scoped
+       * under [data-theme="sketch"], so the default dark theme above is
+       * untouched. Same palette + graph-paper treatment as status/ops.
+       * ================================================================== */
+      [data-theme="sketch"] {
+        --bg: #eef1e6;
+        --fg: #16283b;
+        --muted: #5b6b78;
+        --accent: #1f5aa8;
+        --border: #34465a;
+        --panel: rgba(255, 255, 255, 0.55);
+        --ok: #2f8f3e;
+        --warn: #b3781a;
+        --down: #cf3b32;
+      }
+      [data-theme="sketch"] body {
+        background-color: var(--bg);
+        background-image:
+          repeating-linear-gradient(0deg,  rgba(47, 74, 110, 0.07) 0 1px, transparent 1px 24px),
+          repeating-linear-gradient(90deg, rgba(47, 74, 110, 0.07) 0 1px, transparent 1px 24px),
+          repeating-linear-gradient(0deg,  rgba(47, 74, 110, 0.16) 0 1px, transparent 1px 120px),
+          repeating-linear-gradient(90deg, rgba(47, 74, 110, 0.16) 0 1px, transparent 1px 120px);
+        background-attachment: fixed;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="sketch"] h1,
+      [data-theme="sketch"] h2 { letter-spacing: 0; }
+      /* Hand-drawn paper surfaces: wobbly outline + hard offset shadow. */
+      [data-theme="sketch"] .panel {
+        background: var(--panel);
+        border: 1.5px solid var(--border);
+        border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+        box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .panel:nth-of-type(even) {
+        border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
+      }
+      [data-theme="sketch"] .logo {
+        background: rgba(31, 90, 168, 0.10);
+        color: var(--accent);
+        border: 1.5px solid var(--accent);
+        border-radius: 14px 225px 18px 255px / 255px 16px 225px 15px;
+        box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .btn,
+      [data-theme="sketch"] .theme-toggle {
+        border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+        box-shadow: 1px 2px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .note {
+        border-style: dashed;
+        border-radius: 15px 225px 15px 255px / 225px 15px 255px 15px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="head">
+        <div class="logo" aria-hidden="true">OS</div>
+        <div>
+          <h1>OpenSkeleton Diagnostics</h1>
+          <p class="sub">Device + native-plugin status for QA. Values below are read live from this device.</p>
+        </div>
+      </header>
+
+      <!-- PLATFORM ---------------------------------------------------------- -->
+      <section class="panel" id="diag-platform">
+        <h2>Platform</h2>
+        <div class="field">
+          <span class="field__label">Runtime</span>
+          <span class="field__value">
+            <span class="dot dot--pending" id="diag-platform-dot" aria-hidden="true"></span>
+            <span id="diag-platform-value">Detecting…</span>
+          </span>
+        </div>
+      </section>
+
+      <!-- NATIVE PLUGIN STATUS ---------------------------------------------- -->
+      <section class="panel" id="diag-plugins">
+        <h2>Native plugins</h2>
+        <p class="panel__hint">Expected Capacitor plugins for this build — present only inside the native shell.</p>
+        <div class="field">
+          <span class="field__label">SplashScreen</span>
+          <span class="field__value">
+            <span class="dot dot--pending" id="diag-plugin-SplashScreen-dot" aria-hidden="true"></span>
+            <span id="diag-plugin-SplashScreen">Checking…</span>
+          </span>
+        </div>
+        <div class="field">
+          <span class="field__label">Geolocation</span>
+          <span class="field__value">
+            <span class="dot dot--pending" id="diag-plugin-Geolocation-dot" aria-hidden="true"></span>
+            <span id="diag-plugin-Geolocation">Checking…</span>
+          </span>
+        </div>
+        <div class="field">
+          <span class="field__label">PushNotifications</span>
+          <span class="field__value">
+            <span class="dot dot--pending" id="diag-plugin-PushNotifications-dot" aria-hidden="true"></span>
+            <span id="diag-plugin-PushNotifications">Checking…</span>
+          </span>
+        </div>
+      </section>
+
+      <!-- GPS --------------------------------------------------------------- -->
+      <section class="panel" id="diag-gps">
+        <h2>GPS / location</h2>
+        <p class="panel__hint">Reads your current latitude/longitude on demand (asks permission first).</p>
+        <div class="field">
+          <span class="field__label">Permission</span>
+          <span class="field__value">
+            <span class="dot dot--pending" id="diag-gps-dot" aria-hidden="true"></span>
+            <span id="diag-gps-permission">—</span>
+          </span>
+        </div>
+        <div class="field">
+          <span class="field__label">Coordinates</span>
+          <span class="field__value" id="diag-gps-coords" aria-live="polite">—</span>
+        </div>
+        <div class="field">
+          <span class="field__label">Accuracy</span>
+          <span class="field__value" id="diag-gps-accuracy">—</span>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" id="diag-gps-refresh">Refresh location</button>
+        </div>
+        <!-- Coarse phase hook (idle/loading/ok/error/unsupported) for styling/tests. -->
+        <span id="diag-gps-status" hidden></span>
+      </section>
+
+      <!-- FCM PUSH ---------------------------------------------------------- -->
+      <section class="panel" id="diag-fcm">
+        <h2>Push / FCM</h2>
+        <p class="panel__hint">Notification permission + the FCM registration token for this device.</p>
+        <div class="field">
+          <span class="field__label">Permission</span>
+          <span class="field__value">
+            <span class="dot dot--pending" id="diag-fcm-dot" aria-hidden="true"></span>
+            <span id="diag-fcm-permission">—</span>
+          </span>
+        </div>
+        <div class="field">
+          <span class="field__label">FCM token</span>
+          <span class="field__value field__value--mono" id="diag-fcm-token" aria-live="polite">—</span>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" id="diag-fcm-refresh">Check push</button>
+          <button type="button" class="btn" id="diag-fcm-copy" disabled>Copy token</button>
+          <span class="copy-status" id="diag-fcm-copy-status" role="status" aria-live="polite"></span>
+        </div>
+        <!-- The OSK-165 gate, stated honestly on the page itself. -->
+        <p class="note">
+          Live push delivery needs FCM enabled + a project <code>google-services.json</code>
+          (OSK-165, a human step, not in this repo). Until then a device may show
+          “No FCM token yet — FCM not configured (OSK-165)”; the screen is built to light up
+          automatically once that lands, with no code change here.
+        </p>
+        <!-- Coarse phase hook (idle/loading/ok/denied/no-token/unavailable) for tests. -->
+        <span id="diag-fcm-status" hidden></span>
+      </section>
+
+      <footer class="foot">
+        <span class="foot__nav">
+          <a href="/">&larr; OpenSkeleton home</a>
+          &nbsp;&middot;&nbsp;
+          <a href="/ops">Ops</a>
+        </span>
+        <!-- OSK-127/171 theme toggle (driven by theme-switcher.js). -->
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Theme: Default</button>
+        <span class="foot__byline">A product of <a href="https://openskeleton.dev" target="_blank" rel="noopener">OpenSkeleton</a></span>
+      </footer>
+    </main>
+
+    <!--
+      OSK-152 — device location wrapper; publishes window.OSKGeolocation. Included here so
+      diagnostics.js can reuse it. It wires the (absent) #osk-geo-* widget only if present,
+      so on this page it just exposes the API and does nothing else.
+    -->
+    <script src="/geolocation.js"></script>
+    <!--
+      OSK-150 — push notification client; publishes window.OSKPush. On this page there is no
+      OSKAuth, so it does NOT auto-register; diagnostics.js drives register() explicitly from
+      the "Check push" button. In a plain browser it is a no-op (mode NONE).
+    -->
+    <script src="/push-client.js"></script>
+    <!--
+      OSK-169 — the diagnostics controller. Reads window.Capacitor + the two wrappers above +
+      navigator.clipboard, and renders every section. XSS-safe (textContent only).
+    -->
+    <script src="/diagnostics.js"></script>
+    <!--
+      OSK-171 — shared, config-driven in-app theme switcher. Drives the footer #theme-toggle
+      and mounts the floating switcher so the theme is reachable in the Capacitor WebView too.
+    -->
+    <script src="/theme-switcher.js"></script>
+  </body>
+</html>
