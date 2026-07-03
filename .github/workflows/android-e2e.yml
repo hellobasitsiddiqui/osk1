@@ -171,6 +171,12 @@ jobs:
       #     deterministic on a CI runner with no GPU.
       - name: Run emulator e2e flow
         uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+        # Pass the harvest dir + CDP port through to the flow explicitly. These also
+        # come from the job-level `env:`, but restating them on the step makes the
+        # script's inputs self-evident and independent of job-wide env.
+        env:
+          SCREENSHOT_DIR: ${{ env.SCREENSHOT_DIR }}
+          CDP_PORT: ${{ env.CDP_PORT }}
         with:
           api-level: 30
           target: google_apis
@@ -180,70 +186,13 @@ jobs:
           ram-size: 4096M
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none
-          script: |
-            # NB: android-emulator-runner executes this via `sh` (dash), which does not
-            # support `set -o pipefail` ("Illegal option -o pipefail"). Use `set -eu` —
-            # -e/-u are dash-supported and the flow uses no failure-critical pipelines.
-            set -eu
-            mkdir -p "$SCREENSHOT_DIR"
-
-            echo "::group::Install + launch the debug APK"
-            APK=$(find android/app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' | head -n1)
-            echo "installing $APK"
-            adb install -r "$APK"
-            # Launch the single launcher activity (component is stable:
-            # dev.openskeleton.app/.MainActivity).
-            adb shell am start -n dev.openskeleton.app/.MainActivity
-            echo "::endgroup::"
-
-            echo "::group::Milestone 1 — boot / native splash screenshot"
-            # Capture straight after launch: this is the native shell + OSK-158
-            # splash frame, taken before any WebView DevTools target exists (so it
-            # is done here with adb, not by the CDP driver).
-            sleep 3
-            adb exec-out screencap -p > "$SCREENSHOT_DIR/01-boot-splash.png"
-            test -s "$SCREENSHOT_DIR/01-boot-splash.png"
-            echo "captured 01-boot-splash.png"
-            echo "::endgroup::"
-
-            echo "::group::Forward the WebView DevTools socket"
-            # The debuggable WebView publishes its DevTools server on an abstract
-            # unix socket named webview_devtools_remote_<pid>. Discover the actual
-            # name from /proc/net/unix (robust to the pid) and forward it to
-            # CDP_PORT so the driver can reach http://127.0.0.1:$CDP_PORT/json.
-            SOCKET=""
-            for i in $(seq 1 30); do
-              SOCKET=$(adb shell cat /proc/net/unix 2>/dev/null | tr -d '\r' \
-                | grep -o 'webview_devtools_remote_[0-9]*' | head -n1 || true)
-              if [ -n "$SOCKET" ]; then break; fi
-              echo "waiting for the WebView devtools socket (attempt $i)…"
-              sleep 2
-            done
-            if [ -z "$SOCKET" ]; then
-              echo "ERROR: WebView remote-debugging socket never appeared" >&2
-              adb shell cat /proc/net/unix | tr -d '\r' | grep -i webview || true
-              exit 1
-            fi
-            echo "forwarding tcp:$CDP_PORT -> localabstract:$SOCKET"
-            adb forward "tcp:$CDP_PORT" "localabstract:$SOCKET"
-            echo "::endgroup::"
-
-            echo "::group::Milestones 2 & 3 — drive the WebView (home UI + signed-out sign-in)"
-            node scripts/mobile-e2e/drive-webview.mjs
-            echo "::endgroup::"
-
-            echo "::group::Verify the harvested screenshot count"
-            # Exactly three per-step milestone screenshots must have been harvested
-            # (01 boot, 02 home, 03 sign-in). 99-failure.png (a '9' prefix) is
-            # excluded by the 0*-*.png glob, so a failed run cannot pad the count.
-            count=$(find "$SCREENSHOT_DIR" -maxdepth 1 -name '0*-*.png' | wc -l | tr -d ' ')
-            echo "harvested $count per-step screenshots:"
-            ls -l "$SCREENSHOT_DIR"
-            if [ "$count" -ne 3 ]; then
-              echo "ERROR: expected exactly 3 per-step screenshots, got $count" >&2
-              exit 1
-            fi
-            echo "::endgroup::"
+          # android-emulator-runner does NOT run `script:` as one shell — it feeds it
+          # line-by-line, each under its own `/usr/bin/sh -c <line>`, so `set -eu`,
+          # `pipefail`, and shell-variable assignments do NOT persist across lines
+          # (this is what left `$APK` empty on earlier runs). So `script:` is a SINGLE
+          # line that hands the whole flow to ONE bash process: the committed
+          # scripts/mobile-e2e/emulator-flow.sh, which sets `set -euo pipefail` itself.
+          script: bash scripts/mobile-e2e/emulator-flow.sh
 
       # ---- Publish evidence -----------------------------------------------------
       # Each per-step screenshot is uploaded as its OWN named artifact (not one
