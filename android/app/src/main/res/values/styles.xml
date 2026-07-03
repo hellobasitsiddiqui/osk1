@@ -16,7 +16,23 @@
     </style>
 
 
+    <!--
+      Launch (splash) theme. Parented on androidx.core:core-splashscreen's
+      Theme.SplashScreen so the branded splash renders consistently from Android 6
+      (minSdk 24) up through Android 12+'s system splash-screen window.
+
+      OSK-158:
+        - windowSplashScreenBackground pins the Android 12+ system splash window to
+          the OpenSkeleton dark canvas (@color/splash_background = #0d1117) instead
+          of the platform default (which can flash white before the app paints).
+        - android:background keeps the full-screen branded splash image
+          (@drawable/splash — dark canvas + centred "OS" monogram) as the activity
+          window background that bridges the system splash to the first WebView
+          frame. The @capacitor/splash-screen plugin also shows this same image at
+          runtime and dismisses it on-ready (see web/splash.js).
+    -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
         <item name="android:background">@drawable/splash</item>
     </style>
 </resources>
