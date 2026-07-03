@@ -24,6 +24,8 @@ web/e2e/
 ├── badges.simulation.cjs       # headless Node sim of the OSK-70 account-state badges
 ├── history.simulation.cjs      # headless Node sim of the OSK-101 profile-history view
 ├── avatar.simulation.cjs       # headless Node sim of the OSK-83 avatar upload flow
+├── push-client.simulation.cjs  # headless Node sim of the OSK-150 push client
+├── deep-link.simulation.cjs    # headless Node sim of the OSK-156 push deep-link router
 ├── tests/
 │   ├── smoke.spec.ts      # the static-pages smoke walkthrough
 │   ├── theme.spec.ts      # the default <-> sketch theme-switch walkthrough
@@ -237,6 +239,31 @@ fetch/PATCH client and its DOM builders are exported and covered headlessly:
 The gate is **dormant** when signed-out / not-configured, so it does not affect the
 existing `tests/auth-guard.spec.ts` "not configured" assertions. When OSK-92 supplies the
 apiKey, a real first-login walkthrough can drop in as a `tests/*.spec.ts` — no infra change.
+
+## Push deep-link routing (OSK-156) — headless simulation
+
+When a user taps a push notification, the OSK-150 push client (`web/push-client.js`) extracts
+the `data.route` value (the **OSK-166** wire contract, `PushData.ROUTE = "route"`) and hands
+it to the OSK-156 deep-link router (`web/deep-link.js`), which decides where to navigate. A
+live run needs a Capacitor Android device with **FCM enabled** (`google-services.json` — the
+**OSK-165** human gate) and a real tap, none of which exists in CI, so the router's pure,
+dependency-injected logic is exported and covered headlessly:
+
+- **`deep-link.simulation.cjs`** — a zero-dependency Node script that `require()`s the helpers
+  `deep-link.js` exports and drives them with a **fake `localStorage` + fake `navigate` + fake
+  location**, asserting: `resolveRoute` maps every KNOWN route to its same-origin `/x.html`
+  page and **REJECTS** every unknown screen and every open-redirect vector (`javascript:`,
+  `http(s)://`, `data:`, protocol-relative `//host`, backslash tricks — query/hash dropped);
+  a tap while **running** navigates immediately; a tap during a **cold start** persists the
+  pending route and `consumePendingRoute()` on the next load reads+clears+navigates (one-shot,
+  never sticky); a no-route/hostile tap is a safe **no-op**; and — round-tripping through the
+  REAL push client — firing `pushNotificationActionPerformed` with a `data.route` actually
+  navigates. Run it with `node deep-link.simulation.cjs` (exits non-zero on any failure).
+
+The router is **inert** in a plain browser (no push plugin ⇒ no tap ever fires; on load it only
+publishes `window.OSKDeepLink` and consumes any pending route — a no-op when none). It never
+navigates off-origin and embeds no secrets, so it is safe on the live web deploy today and
+lights up for real the moment OSK-165 lands — no change here.
 
 ## When it runs
 

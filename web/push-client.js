@@ -584,13 +584,19 @@ if (typeof window !== "undefined") {
       },
       apiBaseUrl: cfg.apiBaseUrl,
       fetchImpl: typeof window.fetch === "function" ? window.fetch.bind(window) : undefined,
-      // OSK-156 SEAM: when the tap-handler ticket lands it replaces this with real
-      // in-app navigation. Until then a tapped route is just logged (no-op nav) so a tap
-      // still opens the app cleanly and never errors.
+      // OSK-156 SEAM: route a tapped notification into in-app navigation. The deep-link
+      // router (web/deep-link.js) owns the allowlist + navigation + cold-start persistence;
+      // we look it up LAZILY on each tap (window.OSKDeepLink) so script include order does
+      // not matter, and fall back to a harmless log if it is somehow absent. deep-link.js
+      // itself sanitises the route against an allowlist, so an unknown/hostile route here is
+      // a safe no-op and can never open-redirect the WebView.
       onRoute: function (route) {
-        if (route) {
+        var dl = window.OSKDeepLink;
+        if (dl && typeof dl.handleTapRoute === "function") {
+          dl.handleTapRoute(route);
+        } else if (route) {
           // eslint-disable-next-line no-console
-          console.info("[push] deep-link route pending (OSK-156): " + route);
+          console.info("[push] deep-link router unavailable; route ignored: " + route);
         }
       },
       logger: window.console,

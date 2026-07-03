@@ -935,15 +935,26 @@
     -->
     <script src="/onboarding.js"></script>
     <!--
+      OSK-156: push deep-link router. Self-contained + additive. Maps a tapped
+      notification's data.route (the OSK-166 contract) to a KNOWN, same-origin in-app page
+      via a strict allowlist (never an arbitrary/attacker URL), navigating immediately when
+      the app is running and persisting+consuming a pending route across a cold start. In a
+      plain browser it only publishes window.OSKDeepLink and consumes any pending route on
+      load — a pure no-op otherwise, safe to serve on the live web deploy. Loaded BEFORE the
+      push client so window.OSKDeepLink exists when a tap fires (the client also looks it up
+      lazily, so order is not load-bearing).
+    -->
+    <script src="/deep-link.js"></script>
+    <!--
       OSK-150: push-notification client. Self-contained + additive like the modules above.
       On the Capacitor Android shell it requests the OS notification permission, registers
       for push, obtains the FCM token and registers it with the backend
       (POST /api/v1/me/devices, OSK-154) once the user is signed in — and deregisters
       (DELETE) on sign-out — delegating auth to window.OSKAuth (loaded in <head>). In a
       plain browser there is no push plugin, so mode() is NONE and this is a pure no-op:
-      safe to serve on the live web deploy. Tapped-notification deep-link routing is
-      OSK-156; this only keeps a documented seam. Live delivery is gated on OSK-165
-      (FCM + google-services.json — a human step, deliberately not committed).
+      safe to serve on the live web deploy. Tapped-notification deep-link routing is now
+      wired via deep-link.js (OSK-156) through the client's onRoute seam. Live delivery is
+      gated on OSK-165 (FCM + google-services.json — a human step, deliberately not committed).
     -->
     <script src="/push-client.js"></script>
   </body>
