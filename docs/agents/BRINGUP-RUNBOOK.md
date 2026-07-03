@@ -156,6 +156,19 @@ mid-run wall in round 1 (LESSONS **H21**) — pulling it to wave-−1 is the fix
       for the whole round (H19/F7) — noise that masks a real dependency issue.
 - [ ] 🧑 **Branch protection on `main`** — require the CI checks + PR review, forbid
       direct pushes (OSK-17). The fleet's "Done = merged to `main`" model assumes it.
+      Include the **Gitleaks secret scan** check in the required set — OSK-56 made it
+      a blocking gate (`.github/workflows/gitleaks.yml`), so it should be required.
+- [ ] 🧑/🤖 **Install the local secret-scanning pre-commit hook** so a real secret is
+      stopped BEFORE it leaves the machine (OSK-56 — the CI Gitleaks job is only the
+      backstop). Run ONCE per clone:
+      ```bash
+      pip install pre-commit && pre-commit install     # or: scripts/dev-setup.sh
+      ```
+      Git worktrees SHARE one `.git/hooks`, so a single `pre-commit install` in any
+      worktree covers every worktree of that clone — do NOT re-run it per worktree.
+      The hook + the CI backstop both read `.gitleaks.toml` (default rules + the
+      tightly-scoped allowlist for the known-public Firebase web config), so local and
+      CI never disagree.
 
 ## 7 — Classifier allow-rules for the fleet (H17)
 

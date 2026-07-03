@@ -1,0 +1,44 @@
+# .gitleaks.toml — Gitleaks configuration for OpenSkeleton (osk1) — OSK-56.
+#
+# WHAT: extends the built-in Gitleaks ruleset (so ALL default secret patterns —
+#       AWS keys, GitHub/GitLab tokens, private keys, generic high-entropy, etc.
+#       — stay active) and adds ONE tightly-scoped allowlist for the single
+#       known-public value this repo intentionally commits.
+#
+# WHY an allowlist at all: web/config.js deliberately commits the PUBLIC Firebase
+#       Web client `apiKey` and `appId`. These are *client identifiers*, not
+#       secrets: a browser app must ship them, access is enforced by Firebase
+#       Auth + backend token verification (not by hiding the string), and the
+#       key is API-restricted. See web/config.js header + docs/agents/
+#       BRINGUP-RUNBOOK.md §4. Without this allowlist Gitleaks' Google-API-key
+#       rule would flag the committed apiKey and (once the CI gate is blocking,
+#       OSK-56) fail every PR that touches config.js — a false positive.
+#
+# SCOPE — deliberately narrow. We do NOT disable the Google-API-key rule, and we
+#       do NOT allowlist the whole file. The allowlist below only exempts a
+#       finding that BOTH (a) lives in web/config.js AND (b) matches one of the
+#       two exact known-public literals. A DIFFERENT Google API key — anywhere,
+#       including elsewhere in config.js — still fails the scan.
+
+title = "OpenSkeleton (osk1) Gitleaks config"
+
+# Inherit the full upstream default ruleset; our blocks below only ADD to it.
+[extend]
+useDefault = true
+
+# Tightly-scoped allowlist for the known-public Firebase Web client config.
+# `condition = "AND"` means a finding is exempted only when it matches the path
+# AND one of the regexes — so this cannot suppress a real secret that happens to
+# sit in a different file, nor a different key that happens to sit in config.js.
+[[allowlists]]
+description = "Public Firebase Web client config in web/config.js (OSK-92): API-restricted browser apiKey + web appId are public client identifiers, not secrets — safe to commit."
+condition = "AND"
+# Only findings inside this exact file are eligible.
+paths = ['''web/config\.js''']
+# ...and only these two exact known-public literals (not a pattern class).
+regexes = [
+  # Public Firebase Web apiKey for the openskeleton-one project (OSK-92).
+  '''AIzaSyA8_Ac25T4EHsdhkXRZ6_bQlZcBprF1HKc''',
+  # Public Firebase Web appId (project number 476227744481, web app) (OSK-92).
+  '''1:476227744481:web:41667628f03355f898fda0''',
+]

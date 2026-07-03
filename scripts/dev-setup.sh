@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
-# dev-setup.sh (OSK-52) — generate a local .env with dev defaults for docker compose.
+# dev-setup.sh (OSK-52) — one-shot local developer setup: install the secret-scanning
+# pre-commit gate (OSK-56) and generate a local .env with dev defaults for compose.
 #
 # Why not `cp .env.example .env`? .env.example intentionally carries bare, prod-shaped
 # vars (no defaults) so prod misconfig fails loudly — copying it leaves DB_PASSWORD
 # blank and compose aborts. This writes a WORKING local .env instead (TM-127).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
+
+# --- Secret-scanning pre-commit hook (OSK-56) ---------------------------------
+# Install the local gitleaks pre-commit hook so a hard-coded secret is caught at
+# `git commit` time, BEFORE it can leave the machine (the CI Gitleaks job is only
+# the backstop). Idempotent — safe to re-run. Git worktrees SHARE one .git/hooks,
+# so this single install covers every worktree of the clone.
+if command -v pre-commit >/dev/null 2>&1; then
+  ( cd "$root" && pre-commit install )
+  echo "Installed pre-commit hooks (incl. the OSK-56 gitleaks secret gate)."
+else
+  echo "NOTE: 'pre-commit' not found — install it to enable the local secret gate:"
+  echo "      pip install pre-commit && (cd '$root' && pre-commit install)"
+fi
+
 env_file="$root/.env"
 if [ -f "$env_file" ]; then
   echo ".env already exists — leaving it untouched."
