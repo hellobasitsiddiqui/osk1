@@ -65,6 +65,15 @@ public record ProfileChange(String field, String oldValue, String newValue, Stri
     public static final String FIELD_TIMEZONE = "timezone";
     public static final String FIELD_LOCALE = "locale";
 
+    // Account-lifecycle fields (OSK-69), recorded under the same PROFILE_UPDATED action so
+    // they surface in the caller's GET /me/history feed alongside the profile edits above.
+    // For terms acceptance only the VERSION is recorded (the server timestamp is derived
+    // state, not an independently editable field), so there is no separate terms-timestamp
+    // history field.
+    public static final String FIELD_ONBOARDING_COMPLETED = "onboardingCompleted";
+    public static final String FIELD_TERMS_ACCEPTED_VERSION = "termsAcceptedVersion";
+    public static final String FIELD_AGE_VERIFIED = "ageVerified";
+
     // JSONB metadata keys. Kept private + centralised here so the writer and reader use
     // the exact same strings — a magic-string mismatch would silently produce history
     // entries with null field/old/new, which no compiler would catch.
