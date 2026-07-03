@@ -227,3 +227,31 @@ jobs:
             exit 1
           fi
           echo "Live site is serving over HTTPS."
+
+      # OSK-106: deploy the Firebase Storage security rules (storage.rules,
+      # referenced from firebase.json) to the SAME project on the SAME
+      # merge-to-main path as the Hosting deploy above. Reuses the WIF/OIDC
+      # credentials and firebase-tools already set up for Hosting.
+      #
+      # BEST-EFFORT / NON-FATAL by design. Publishing Storage rules requires the
+      # deploy SA (gh-deployer@openskeleton-one.iam.gserviceaccount.com) to hold
+      # `roles/firebaserules.admin` — documented in infra/README.md and
+      # GENESIS §A2, granted by OSK-107. That grant may not be live on the project
+      # yet, so `firebase deploy --only storage` can fail at runtime with a
+      # permission error. This step is therefore `continue-on-error: true` AND
+      # swallows the failure internally (exits 0 with a clear ::warning::) so a
+      # rules-deploy failure can NEVER break the web Hosting deploy above. Once
+      # the grant lands, this step starts succeeding with no code change.
+      - name: Deploy Firebase Storage rules (best-effort until firebaserules.admin granted)
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          if firebase deploy \
+               --only storage \
+               --project openskeleton-one \
+               --non-interactive; then
+            echo "::notice::Firebase Storage rules deployed from storage.rules."
+          else
+            rc=$?
+            echo "::warning::Storage-rules deploy failed (exit ${rc}) — treating as non-fatal. This almost certainly means the deploy SA (gh-deployer) does not yet hold roles/firebaserules.admin (see OSK-107 / GENESIS §A2 / infra/README.md). The web Hosting deploy above is unaffected; storage.rules will publish automatically once the grant is applied. Not failing the job."
+          fi
