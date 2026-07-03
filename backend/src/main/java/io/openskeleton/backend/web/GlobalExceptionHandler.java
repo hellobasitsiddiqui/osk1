@@ -6,7 +6,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -17,13 +19,15 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * {@code application/problem+json}) so all clients handle errors uniformly and a
  * stack trace is never leaked to the caller.
  *
- * <p>Mappings implemented here: bean-validation → 400, {@link NotFoundException}
- * → 404, {@link ConflictException} → 409, optimistic-locking failures
- * ({@link ObjectOptimisticLockingFailureException} / {@link OptimisticLockException})
- * → 409, and a catch-all → 500. The remaining data-layer-specific mappings named in
- * the OSK-39 ticket ({@code DataIntegrityViolationException} → 409, bad
- * {@code ?sort=} / oversized-page → 400) are deferred until they are needed — see the
- * ticket note.
+ * <p>Mappings implemented here: bean-validation → 400, unreadable/invalid body
+ * ({@link HttpMessageNotReadableException}, e.g. an unknown enum value) → 400,
+ * {@link NotFoundException} → 404, method-security denial
+ * ({@link AccessDeniedException}) → 403, {@link ConflictException} → 409,
+ * optimistic-locking failures ({@link ObjectOptimisticLockingFailureException} /
+ * {@link OptimisticLockException}) → 409, and a catch-all → 500. The remaining
+ * data-layer-specific mappings named in the OSK-39 ticket
+ * ({@code DataIntegrityViolationException} → 409, bad {@code ?sort=} / oversized-page
+ * → 400) are deferred until they are needed — see the ticket note.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -63,6 +67,42 @@ public class GlobalExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(
                 HttpStatus.CONFLICT, "The resource was updated concurrently. Reload the latest version and retry.");
         pd.setTitle("Conflict");
+        return pd;
+    }
+
+    /**
+     * Method-security authorization denial → 403. Raised when a caller who authenticated
+     * successfully invokes a handler they are not permitted to use — e.g. a non-admin hitting
+     * a {@code @PreAuthorize("hasRole('ADMIN')")} admin endpoint (OSK-71). Spring Security's
+     * {@code AuthorizationDeniedException} extends {@link AccessDeniedException}, so this one
+     * mapping covers method-security denials. It is deliberately distinct from the 401 the
+     * auth filter emits for an <i>unauthenticated</i> caller: 401 = "who are you?", 403 =
+     * "you're known, but not allowed". The message is generic so it never reveals what the
+     * caller was missing.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ProblemDetail handleAccessDenied(AccessDeniedException ex) {
+        log.debug("Authorization denied", ex);
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.FORBIDDEN, "You do not have permission to perform this action.");
+        pd.setTitle("Forbidden");
+        return pd;
+    }
+
+    /**
+     * Unreadable/invalid request body → 400. Covers a malformed JSON payload and — the case
+     * that matters for OSK-71 — a value that cannot be bound to its target type, such as an
+     * unknown enum constant in {@code {"role":"SUPERADMIN"}} (Jackson raises
+     * {@link HttpMessageNotReadableException}). Without this it would fall through to the
+     * catch-all 500; a bad body is a client error, so it is a 400. The message is generic to
+     * avoid echoing attacker-controlled parse detail.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ProblemDetail handleUnreadableBody(HttpMessageNotReadableException ex) {
+        log.debug("Unreadable request body", ex);
+        ProblemDetail pd =
+                ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Malformed or invalid request body.");
+        pd.setTitle("Bad Request");
         return pd;
     }
 
