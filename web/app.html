@@ -862,5 +862,14 @@
       optional window.__APP_CONFIG__.tour block. Identical include across every page.
     -->
     <script src="/tour.js"></script>
+    <!--
+      OSK-78: terms/privacy acceptance gate. Self-contained like tour.js — this ONE include
+      injects its own themed overlay + styles, reads window.__APP_CONFIG__.termsVersion, and
+      when the signed-in user's accepted version is out of date it BLOCKS this app page until
+      they accept (PATCH /api/v1/me/lifecycle). Loaded after auth.js + config.js so
+      window.OSKAuth and the config exist. Independent + idempotent, so it composes with the
+      other first-login gates (intended order: terms -> profile-completion -> onboarding).
+    -->
+    <script src="/terms.js"></script>
   </body>
 </html>

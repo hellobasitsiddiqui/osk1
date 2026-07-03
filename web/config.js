@@ -35,6 +35,20 @@ window.__APP_CONFIG__ = {
   // never hardcoded, so a fresh replay project shows the correct value.
   buildSha: "dev",
 
+  // OSK-78: the CURRENT terms-of-service / privacy-policy version the app requires a
+  // signed-in user to have accepted. web/terms.js compares this to the user's
+  // `termsAcceptedVersion` (from GET /api/v1/me, an OSK-69 lifecycle field) and, when
+  // they DIFFER (including null = never accepted), shows a blocking acceptance gate on
+  // the protected /app page. Accepting PATCHes /api/v1/me/lifecycle
+  // ({ termsAcceptedVersion: <this> }); the server stamps `termsAcceptedAt`.
+  //
+  // OPERATOR CONTRACT: bump this string whenever the Terms/Privacy text materially
+  // changes — every user is then re-gated on their next visit until they re-accept. Any
+  // opaque, monotonic label works; an ISO date is the convention. Leave it "" to make the
+  // gate INERT (nothing to accept, never blocks), which keeps terms.js safe to ship even
+  // before real terms/privacy copy exists.
+  termsVersion: "2026-07-01",
+
   // OSK-151: site-wide alert banner (web MVP, config-driven). Every web page reads
   // this at runtime and renders a dismissible, full-width banner across the top
   // WHEN `active` is true AND — if a time window is set — the current time is
