@@ -1,0 +1,7 @@
+# e2e harness — never commit installed deps or run artifacts.
+node_modules/
+# Playwright outputs (screenshots / video / traces / HTML report).
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
