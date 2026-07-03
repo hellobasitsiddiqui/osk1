@@ -546,6 +546,23 @@
         </ul>
       </section>
 
+      <!--
+        OSK-152 — Device location. A deliberately MINIMAL read-one-position widget
+        (the full diagnostics screen is OSK-169). On the Capacitor Android shell it
+        reads the device GPS via @capacitor/geolocation; in a plain browser it falls
+        back to navigator.geolocation; where neither exists it shows "unavailable".
+        web/geolocation.js finds these elements by id and wires the button — no
+        page-specific glue, and it degrades to a no-op so the live web deploy is
+        unaffected.
+      -->
+      <section class="panel" id="ops-device-location">
+        <h2>Device location</h2>
+        <p class="panel__hint">Reads your current latitude/longitude on demand (asks permission first).</p>
+        <button type="button" id="osk-geo-btn" class="theme-toggle">Get current location</button>
+        <p id="osk-geo-output" aria-live="polite">—</p>
+        <span id="osk-geo-status" hidden></span>
+      </section>
+
       <footer class="foot">
         <!-- OSK-144: Help link sits next to the home link in the footer nav. -->
         <span class="foot__nav">
@@ -833,5 +850,8 @@
       Self-contained + additive; identical include across every tour page.
     -->
     <script src="/onboarding.js"></script>
+    <!-- OSK-152 — device location wrapper; wires the #osk-geo-* widget above and
+         degrades to a no-op in a plain browser with no geolocation support. -->
+    <script src="/geolocation.js"></script>
   </body>
 </html>

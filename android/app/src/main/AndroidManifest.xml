@@ -38,4 +38,16 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- OSK-152 — device location (@capacitor/geolocation).
+         FINE = GPS-grade precise location; COARSE = network/approximate. Both are
+         declared because the runtime request (web/geolocation.js) asks for precise
+         location, but on Android 12+ the user may grant only "Approximate", in which
+         case only COARSE is honoured — declaring both lets the plugin degrade to the
+         coarse fix the user allowed instead of failing. These are DANGEROUS
+         (runtime) permissions: declaring them here only makes them requestable; the
+         actual grant is prompted at runtime by Geolocation.requestPermissions().
+         The web fallback (browser navigator.geolocation) never reads this manifest. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 </manifest>
