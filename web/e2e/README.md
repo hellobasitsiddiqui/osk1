@@ -93,6 +93,26 @@ it without needing a live Firebase sign-in (which requires the human apiKey/appI
 When OSK-92 supplies the apiKey/appId, a real **cold-login** walkthrough can drop in as a
 new `tests/*.spec.ts` using this same harness — no infra change.
 
+## Admin users console (OSK-72) — headless simulation
+
+The admin console (`web/admin.html` + `web/admin.js`) is gated to signed-in **ADMINs**,
+so a live end-to-end run needs both the human Firebase apiKey (**OSK-92**) and an ADMIN
+test user — neither available in CI. As with the auth guard, the console's decision +
+request logic is **pure** and `admin.js` exports it, so it is covered headlessly:
+
+- **`admin-console.simulation.cjs`** — a zero-dependency Node script that `require()`s the
+  pure helpers `admin.js` exports and asserts, with a fake DOM + a **stubbed fetch**:
+  the admin-access state machine (`computeAdminView`: not-configured / loading / error /
+  signed-out / checking / **signed-in-non-admin** / **signed-in-ADMIN**, plus 401/403 on
+  `/api/v1/me`); the client-side search/filter (`applyUserFilters`); the list-render row
+  model; the pager model; and the API client (`createAdminApi`) — proving every request's
+  shape (method, URL incl. `?page=&size=`, `Authorization: Bearer`, JSON `{role}` /
+  `{enabled}` body) and its 401 / 403 / signed-out / network-error handling. Run it with
+  `node admin-console.simulation.cjs` (exits non-zero on any failure).
+
+When OSK-92 + an ADMIN test user are available, a real admin walkthrough can drop in as a
+new `tests/*.spec.ts` using this same harness — no infra change.
+
 ## When it runs
 
 The dedicated workflow [`.github/workflows/e2e.yml`](../../.github/workflows/e2e.yml)

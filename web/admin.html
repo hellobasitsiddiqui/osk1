@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<!--
+  admin.html — OpenSkeleton admin users console (OSK-72).
+
+  WHAT: an ADMIN-only console to administer user accounts. Like app.html (OSK-74) it is
+  split into regions the access guard shows/hides based on Firebase Auth state PLUS the
+  caller's backend role:
+    - a NOTICE region  — shown for "auth not configured" / loading / error / "not an
+      admin" / "session not authorized" states, with an explanatory line,
+    - a SIGN-IN region — shown when signed OUT (email+password form + "Sign in with
+      Google"), identical in shape to app.html, and
+    - the CONSOLE region — shown ONLY for a signed-in caller whose GET /api/v1/me role is
+      ADMIN. It lists users from GET /api/v1/admin/users (server-paged), filters them
+      client-side, and changes a user's role / enabled flag via the PATCH endpoints —
+      every call carrying the caller's Firebase ID token as `Authorization: Bearer …`.
+
+  Design (mirrors index/status/ops/help/app so the pages read as one product):
+  - Self-contained: inlined CSS + the shared theme/alert scripts, no bundler. The only
+    external code is the Firebase SDK, which web/auth.js loads LAZILY from gstatic at a
+    PINNED version — and only when auth is configured. The console's own logic lives in
+    web/admin.js (a plain <script src>, Node-requirable for headless simulation).
+  - Config-driven: Firebase Web App config + backend base URL both come from config.js.
+    Nothing here is hardcoded, so this page works the instant the human fills in the
+    apiKey/appId minted by the Firebase Web App registration (OSK-92).
+  - Graceful "not configured" / "not authorized": until OSK-92 supplies the apiKey — or
+    for a non-admin caller — the guard shows a clear notice and keeps the console hidden;
+    it never crashes or blanks. Backend 401/403 are handled the same way.
+  - XSS-safe: every dynamic string is written with textContent / createElement only.
+
+  Routing: reachable at the clean path "/admin" via a Firebase Hosting rewrite
+  ("/admin" -> "/admin.html", added to firebase.json ahead of the SPA catch-all) and also
+  directly at "/admin.html".
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenSkeleton Admin — Users</title>
+    <!-- Runtime config, loaded as the sibling pages load it (plain, non-module script). -->
+    <script src="/config.js"></script>
+    <!-- OSK-127: apply the persisted theme BEFORE first paint to avoid a flash. -->
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem("osk-theme") === "sketch") {
+            document.documentElement.setAttribute("data-theme", "sketch");
+          }
+        } catch (e) {
+          /* localStorage unavailable — keep the default theme */
+        }
+      })();
+    </script>
+    <!--
+      OSK-74 auth module then the OSK-72 console logic. Both are plain <script src>
+      (non-module) like every other page script. auth.js exposes window.OSKAuth; admin.js
+      reads it. Loaded in the <head> so the globals exist before the page renders; admin.js
+      itself waits for DOMContentLoaded before touching the DOM.
+    -->
+    <script src="/auth.js"></script>
+    <script src="/admin.js"></script>
+    <style>
+      /* Shared palette + surfaces with status/ops/help/app so all pages look identical. */
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --accent: #4c8bf5;
+        --muted: #8b949e;
+        --border: #30363d;
+        --panel: #161b22;
+        --ok: #3fb950; /* green — operational / success */
+        --warn: #d29922; /* amber — degraded */
+        --down: #f85149; /* red   — error / unavailable */
+        --pending: #8b949e; /* grey — still checking */
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background: radial-gradient(circle at 50% 0%, #161b22 0%, var(--bg) 60%);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        line-height: 1.5;
+        padding: 2rem 1.25rem 3rem;
+      }
+      /* The console is a wide table, so this page is wider than app.html's 34rem. */
+      .wrap { max-width: 60rem; margin: 0 auto; }
+
+      /* --- Header (logo + title), echoing the sibling pages ------------------ */
+      .head { display: flex; align-items: center; gap: 0.9rem; margin-bottom: 1.5rem; }
+      .logo {
+        width: 48px; height: 48px; flex: 0 0 auto;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--accent), #7c3aed);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.3rem; font-weight: 700; color: #fff;
+      }
+      h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.02em; }
+      .sub { color: var(--muted); margin: 0.15rem 0 0; font-size: 0.9rem; }
+
+      /* --- Panels (shared with ops/status/help/app) ------------------------- */
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        padding: 1.25rem 1.35rem;
+        margin-bottom: 1.25rem;
+      }
+      .panel h2 { font-size: 1.05rem; margin: 0 0 0.35rem; letter-spacing: -0.01em; }
+      .panel__hint { color: var(--muted); font-size: 0.85rem; margin: 0 0 1rem; }
+      .panel__hint code {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 0.9em; color: var(--fg);
+      }
+
+      /* --- Access NOTICE (not-configured / loading / error / not-admin) ------ */
+      /* A quiet, left-accented strip. Tone class sets the accent (pending/error/info). */
+      .notice { border-left-width: 5px; border-left-color: var(--pending); }
+      .notice--pending { border-left-color: var(--pending); }
+      .notice--error { border-left-color: var(--down); }
+      .notice--info { border-left-color: var(--accent); }
+      .notice__text { margin: 0; color: var(--fg); }
+
+      /* --- Sign-in form (identical to app.html's OSK-74 form) --------------- */
+      .field { display: block; margin-bottom: 0.85rem; }
+      .field__label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.3rem; }
+      .field__input {
+        width: 100%; font: inherit; color: var(--fg); background: #0d1117;
+        border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.7rem;
+        -webkit-appearance: none; appearance: none;
+      }
+      .field__input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+      .btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+        min-height: 44px; font: inherit; font-weight: 600; border-radius: 8px;
+        border: 1px solid var(--border); padding: 0.55rem 1rem; cursor: pointer;
+        -webkit-appearance: none; appearance: none; -webkit-tap-highlight-color: transparent;
+      }
+      .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .btn[disabled] { opacity: 0.6; cursor: default; }
+      .btn--primary { width: 100%; color: #fff; background: var(--accent); border-color: transparent; }
+      .btn--primary:hover:not([disabled]) { filter: brightness(1.08); }
+      .btn--google { width: 100%; color: var(--fg); background: transparent; }
+      .btn--google:hover:not([disabled]) { border-color: var(--muted); }
+      .btn--google__icon { width: 18px; height: 18px; flex: 0 0 auto; }
+      .btn--ghost {
+        color: var(--muted); background: transparent;
+        min-height: 0; padding: 0.4rem 0.8rem; font-weight: 500; font-size: 0.85rem;
+      }
+      .btn--ghost:hover:not([disabled]) { color: var(--fg); border-color: var(--muted); }
+
+      .divider {
+        display: flex; align-items: center; gap: 0.75rem;
+        color: var(--muted); font-size: 0.78rem; text-transform: uppercase;
+        letter-spacing: 0.06em; margin: 1rem 0;
+      }
+      .divider::before, .divider::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--border); }
+
+      .form-error { margin: 0.85rem 0 0; color: var(--down); font-size: 0.85rem; }
+      .form-error[hidden] { display: none; }
+
+      /* --- Console region ---------------------------------------------------- */
+      .console__bar {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 0.75rem; margin-bottom: 0.35rem;
+      }
+      .console__bar h2 { margin: 0; }
+
+      /* Filter row: search box + role/status dropdowns. Wraps on narrow screens. */
+      .filters { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0.9rem 0 0.4rem; }
+      .filters__search { flex: 1 1 14rem; min-width: 0; }
+      .filters select, .pager__size {
+        font: inherit; color: var(--fg); background: #0d1117;
+        border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.6rem;
+        -webkit-appearance: none; appearance: none;
+      }
+      .filters select:focus-visible, .pager__size:focus-visible {
+        outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
+      }
+
+      .list-status { color: var(--muted); font-size: 0.82rem; margin: 0.5rem 0 0; min-height: 1.1em; }
+      .list-error { margin: 0.5rem 0 0; color: var(--down); font-size: 0.85rem; }
+      .list-error[hidden] { display: none; }
+
+      /* Table. Horizontally scrollable if it overflows on a mid-width screen; it becomes
+         a stacked card layout at phone width (see the media query). */
+      .table-wrap { margin-top: 0.8rem; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .utable { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+      .utable th, .utable td {
+        text-align: left; padding: 0.55rem 0.6rem;
+        border-bottom: 1px solid var(--border); vertical-align: middle;
+      }
+      .utable th {
+        color: var(--muted); font-size: 0.72rem; text-transform: uppercase;
+        letter-spacing: 0.05em; font-weight: 600; white-space: nowrap;
+      }
+      .utable td.email { overflow-wrap: anywhere; }
+      .utable tbody tr:last-child td { border-bottom: 0; }
+
+      .row-role, .row-toggle { font: inherit; }
+      .row-role {
+        color: var(--fg); background: #0d1117; border: 1px solid var(--border);
+        border-radius: 8px; padding: 0.35rem 0.5rem;
+        -webkit-appearance: none; appearance: none;
+      }
+      .row-role:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+      .row-role[disabled] { opacity: 0.6; cursor: default; }
+      .you-tag { color: var(--muted); font-size: 0.8em; }
+
+      /* Status pill. */
+      .pill {
+        display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px;
+        font-size: 0.75rem; font-weight: 600; border: 1px solid var(--border);
+      }
+      .pill--on { color: var(--ok); border-color: var(--ok); }
+      .pill--off { color: var(--down); border-color: var(--down); }
+
+      .empty { color: var(--muted); font-size: 0.9rem; margin: 1rem 0 0; text-align: center; padding: 1.25rem 0; }
+      .empty[hidden] { display: none; }
+
+      /* Pager. */
+      .pager { display: flex; align-items: center; gap: 0.6rem; margin-top: 1rem; flex-wrap: wrap; }
+      .pager__label { color: var(--muted); font-size: 0.82rem; }
+      .pager__size { margin-left: auto; padding: 0.4rem 0.5rem; }
+
+      /* --- Footer (shared) --------------------------------------------------- */
+      .foot {
+        display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+        margin-top: 1.5rem; color: var(--muted); font-size: 0.8rem;
+      }
+      .foot a { color: var(--accent); text-decoration: none; }
+      .foot a:hover { text-decoration: underline; }
+      .foot__byline { flex-basis: 100%; margin-top: 0.35rem; color: var(--muted); }
+      .foot__byline a { color: var(--muted); text-decoration: none; }
+      .foot__byline a:hover { color: var(--accent); text-decoration: underline; }
+
+      /* OSK-117 mobile-web polish: a single phone breakpoint (~360–430px wide). */
+      @media (max-width: 640px) {
+        body { padding: 1.5rem 1rem 2.5rem; }
+        h1 { font-size: 1.3rem; }
+        .panel { padding: 1.1rem; }
+        .console__bar { flex-direction: column; align-items: stretch; }
+        .filters__search, .filters select { width: 100%; flex-basis: auto; }
+        .btn--ghost { width: 100%; }
+
+        /* Stacked "card" table: hide the head, turn each row into a labelled block. Each
+           <td> shows its column name from data-label so a phone user still has context. */
+        .utable, .utable tbody, .utable tr, .utable td { display: block; width: 100%; }
+        .utable thead { display: none; }
+        .utable tr {
+          border: 1px solid var(--border); border-radius: 10px;
+          padding: 0.4rem 0.6rem; margin-bottom: 0.7rem;
+        }
+        .utable td { border-bottom: 0; padding: 0.35rem 0; display: flex; gap: 0.75rem; }
+        .utable td::before {
+          content: attr(data-label); flex: 0 0 6.5rem;
+          color: var(--muted); font-size: 0.72rem; text-transform: uppercase;
+          letter-spacing: 0.05em; font-weight: 600; align-self: center;
+        }
+        .row-role { width: 100%; }
+        .row-toggle { width: 100%; }
+        .pager__size { margin-left: 0; width: 100%; }
+        .foot a { display: inline-block; padding: 0.25rem 0; }
+      }
+
+      /* ================================================================== *
+       * OSK-151 — site-wide, config-driven, dismissible alert banner.
+       * Identical block across index/status/ops/help/app/admin.
+       * ================================================================== */
+      .alert-banner {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+        display: flex; align-items: flex-start; gap: 0.7rem;
+        padding: 0.75rem 1.15rem;
+        background: var(--panel, #161b22); color: var(--fg);
+        border-bottom: 1px solid var(--border); border-top: 4px solid var(--accent);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 0.9rem; line-height: 1.45; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+      }
+      .alert-banner[hidden] { display: none; }
+      .alert-banner--info { border-top-color: var(--accent); }
+      .alert-banner--warning { border-top-color: var(--warn, #d29922); }
+      .alert-banner--critical { border-top-color: var(--down, #f85149); }
+      .alert-banner__dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; margin-top: 0.35rem; background: var(--accent); }
+      .alert-banner--info .alert-banner__dot { background: var(--accent); }
+      .alert-banner--warning .alert-banner__dot { background: var(--warn, #d29922); }
+      .alert-banner--critical .alert-banner__dot { background: var(--down, #f85149); }
+      .alert-banner__msg { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+      .alert-banner__close {
+        flex: 0 0 auto; font: inherit; font-size: 1.25rem; line-height: 1;
+        color: var(--muted); background: transparent; border: 0; border-radius: 6px;
+        padding: 0.15rem 0.45rem; cursor: pointer; -webkit-appearance: none; appearance: none;
+      }
+      .alert-banner__close:hover { color: var(--fg); }
+      .alert-banner__close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      @media (max-width: 640px) {
+        .alert-banner { padding: 0.7rem 0.9rem; font-size: 0.875rem; }
+        .alert-banner__close { font-size: 1.4rem; padding: 0.1rem 0.5rem; }
+      }
+
+      /* ================================================================== *
+       * OSK-127 — selectable "sketch / blueprint" theme + its toggle.
+       * Default-theme rules above are untouched; everything theme-specific is
+       * scoped under [data-theme="sketch"]. Matches the siblings and sketch-ifies
+       * this page's inputs/table/pills so the paper theme is consistent here too.
+       * ================================================================== */
+      .theme-toggle {
+        font: inherit; font-size: 0.78rem; line-height: 1.2; color: var(--muted);
+        background: transparent; border: 1px solid var(--border); border-radius: 999px;
+        padding: 0.3rem 0.75rem; margin-left: auto; cursor: pointer;
+        -webkit-appearance: none; appearance: none;
+      }
+      .theme-toggle:hover { color: var(--fg); border-color: var(--muted); }
+      .theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      [data-theme="sketch"] {
+        --bg: #eef1e6; --fg: #16283b; --muted: #5b6b78; --accent: #1f5aa8;
+        --border: #34465a; --panel: rgba(255, 255, 255, 0.55);
+        --ok: #2f8f3e; --warn: #b3781a; --down: #cf3b32;
+      }
+      [data-theme="sketch"] body {
+        background-color: var(--bg);
+        background-image:
+          repeating-linear-gradient(0deg,  rgba(47, 74, 110, 0.07) 0 1px, transparent 1px 24px),
+          repeating-linear-gradient(90deg, rgba(47, 74, 110, 0.07) 0 1px, transparent 1px 24px),
+          repeating-linear-gradient(0deg,  rgba(47, 74, 110, 0.16) 0 1px, transparent 1px 120px),
+          repeating-linear-gradient(90deg, rgba(47, 74, 110, 0.16) 0 1px, transparent 1px 120px);
+        background-attachment: fixed;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="sketch"] h1, [data-theme="sketch"] h2, [data-theme="sketch"] h3 { letter-spacing: 0; }
+      [data-theme="sketch"] .panel {
+        background: var(--panel); border: 1.5px solid var(--border);
+        border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+        box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .panel:nth-of-type(even) {
+        border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
+      }
+      [data-theme="sketch"] .logo {
+        background: rgba(31, 90, 168, 0.10); color: var(--accent);
+        border: 1.5px solid var(--accent);
+        border-radius: 14px 225px 18px 255px / 255px 16px 225px 15px;
+        box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .theme-toggle {
+        border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+        box-shadow: 1px 2px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .field__input,
+      [data-theme="sketch"] .filters select,
+      [data-theme="sketch"] .row-role,
+      [data-theme="sketch"] .pager__size,
+      [data-theme="sketch"] .filters__search {
+        background: rgba(255, 255, 255, 0.6); border-color: var(--border);
+        border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+      }
+      [data-theme="sketch"] .btn {
+        border-color: var(--border);
+        border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+        box-shadow: 1px 2px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .btn--primary { color: #fff; }
+      [data-theme="sketch"] .pill { border-radius: 999px; }
+      [data-theme="sketch"] .utable tr {
+        border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- OSK-151: site-wide alert banner mount (hidden until an alert is configured). -->
+    <aside id="site-alert" class="alert-banner" role="alert" aria-live="assertive" hidden>
+      <span class="alert-banner__dot" aria-hidden="true"></span>
+      <span class="alert-banner__msg" id="site-alert-msg"></span>
+      <button type="button" class="alert-banner__close" id="site-alert-close" aria-label="Dismiss this alert">&times;</button>
+    </aside>
+
+    <main class="wrap">
+      <header class="head">
+        <div class="logo" aria-hidden="true">OS</div>
+        <div>
+          <h1>Admin — Users</h1>
+          <p class="sub">Administer user accounts. Admin access required.</p>
+        </div>
+      </header>
+
+      <!--
+        NOTICE region — shown by the guard for the not-configured / loading / error /
+        not-authorized / not-an-admin states with an explanatory line. The tone class
+        (set by admin.js) tints the left accent. Hidden by default.
+      -->
+      <section id="admin-notice" class="panel notice" role="status" aria-live="polite" hidden>
+        <p id="admin-notice-text" class="notice__text"></p>
+      </section>
+
+      <!--
+        SIGN-IN region — shown when SIGNED OUT (identical shape to app.html's OSK-74 form).
+        Hidden by default so signed-in users and the not-configured state never see it.
+      -->
+      <section id="admin-signin" class="panel" aria-labelledby="signin-heading" hidden>
+        <h2 id="signin-heading">Sign in</h2>
+        <p class="panel__hint">Sign in with an administrator account to manage users.</p>
+
+        <form id="signin-form" novalidate>
+          <label class="field">
+            <span class="field__label">Email</span>
+            <input id="signin-email" class="field__input" type="email"
+                   autocomplete="email" inputmode="email" required
+                   placeholder="you@example.com" />
+          </label>
+          <label class="field">
+            <span class="field__label">Password</span>
+            <input id="signin-password" class="field__input" type="password"
+                   autocomplete="current-password" required placeholder="••••••••" />
+          </label>
+          <button id="signin-submit" class="btn btn--primary" type="submit">Sign in</button>
+        </form>
+
+        <div class="divider" aria-hidden="true">or</div>
+
+        <button id="google-btn" class="btn btn--google" type="button">
+          <svg class="btn--google__icon" viewBox="0 0 18 18" aria-hidden="true">
+            <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+            <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
+            <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/>
+            <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+          </svg>
+          Sign in with Google
+        </button>
+
+        <p id="signin-error" class="form-error" role="alert" hidden></p>
+      </section>
+
+      <!--
+        CONSOLE region — shown ONLY for a signed-in ADMIN (role === "ADMIN" from
+        GET /api/v1/me). Everything inside is rendered by web/admin.js. Hidden by default.
+      -->
+      <section id="admin-console" aria-labelledby="console-heading" hidden>
+        <div class="panel">
+          <div class="console__bar">
+            <h2 id="console-heading">Users</h2>
+            <button id="refresh-btn" class="btn btn--ghost" type="button">Refresh</button>
+          </div>
+          <p class="panel__hint">
+            Listed from <code>/api/v1/admin/users</code>. Search filters the current page;
+            paging is server-side.
+          </p>
+
+          <!-- Client-side search + role/status facets over the current page. -->
+          <div class="filters">
+            <label class="filters__search">
+              <span class="field__label">Search</span>
+              <input id="filter-search" class="field__input"
+                     type="search" placeholder="Search email, name, role…"
+                     aria-label="Search users on this page" />
+            </label>
+            <label>
+              <span class="field__label">Role</span>
+              <select id="filter-role" aria-label="Filter by role">
+                <option value="">All roles</option>
+                <option value="USER">USER</option>
+                <option value="ADMIN">ADMIN</option>
+              </select>
+            </label>
+            <label>
+              <span class="field__label">Status</span>
+              <select id="filter-status" aria-label="Filter by status">
+                <option value="">All statuses</option>
+                <option value="enabled">Enabled</option>
+                <option value="disabled">Disabled</option>
+              </select>
+            </label>
+          </div>
+
+          <p id="list-status" class="list-status" role="status" aria-live="polite"></p>
+          <p id="list-error" class="list-error" role="alert" hidden></p>
+
+          <div class="table-wrap">
+            <table class="utable">
+              <thead>
+                <tr>
+                  <th scope="col">Email</th>
+                  <th scope="col">Name</th>
+                  <th scope="col">Role</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Created</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody"></tbody>
+            </table>
+          </div>
+
+          <p id="empty-state" class="empty" hidden></p>
+
+          <div class="pager">
+            <button id="page-prev" class="btn btn--ghost" type="button" disabled>&larr; Prev</button>
+            <span id="page-label" class="pager__label"></span>
+            <button id="page-next" class="btn btn--ghost" type="button" disabled>Next &rarr;</button>
+            <select id="page-size" class="pager__size" aria-label="Users per page">
+              <option value="10">10 / page</option>
+              <option value="20" selected>20 / page</option>
+              <option value="50">50 / page</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <span class="foot__nav">
+          <a href="/">&larr; OpenSkeleton home</a>
+          &nbsp;&middot;&nbsp;
+          <a href="/app">Account</a>
+          &nbsp;&middot;&nbsp;
+          <a href="/help">Help</a>
+        </span>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Theme: Default</button>
+        <span class="foot__byline">A product of <a href="https://openskeleton.dev" target="_blank" rel="noopener">OpenSkeleton</a></span>
+      </footer>
+    </main>
+
+    <script>
+      // OSK-127: theme toggle + persistence. Identical to the other pages.
+      (function () {
+        "use strict";
+        var KEY = "osk-theme";
+        var root = document.documentElement;
+        var btn = document.getElementById("theme-toggle");
+        if (!btn) { return; }
+        function isSketch() { return root.getAttribute("data-theme") === "sketch"; }
+        function sync() {
+          btn.textContent = isSketch() ? "Theme: Sketch" : "Theme: Default";
+          btn.setAttribute("aria-pressed", isSketch() ? "true" : "false");
+        }
+        function apply(theme) {
+          if (theme === "sketch") { root.setAttribute("data-theme", "sketch"); }
+          else { root.removeAttribute("data-theme"); }
+          try { localStorage.setItem(KEY, theme); }
+          catch (e) { /* persistence unavailable — theme still applies this session */ }
+          sync();
+        }
+        btn.addEventListener("click", function () { apply(isSketch() ? "default" : "sketch"); });
+        sync();
+      })();
+    </script>
+
+    <script>
+      // OSK-151 — site-wide alert banner. Identical block across the pages.
+      (function () {
+        "use strict";
+        var cfg = (window.__APP_CONFIG__ || {}).alert || {};
+        var banner = document.getElementById("site-alert");
+        var msgEl = document.getElementById("site-alert-msg");
+        var closeBtn = document.getElementById("site-alert-close");
+        if (!banner || !msgEl || !closeBtn) { return; }
+
+        var SEVERITIES = { info: true, warning: true, critical: true };
+        var STORAGE_PREFIX = "osk-alert-dismissed:";
+
+        function toTime(v) {
+          if (v == null) { return null; }
+          var t = Date.parse(v);
+          return isNaN(t) ? null : t;
+        }
+        function inWindow(now, startsAt, endsAt) {
+          var s = toTime(startsAt);
+          var e = toTime(endsAt);
+          if (s !== null && now < s) { return false; }
+          if (e !== null && now > e) { return false; }
+          return true;
+        }
+        function hashMessage(str) {
+          var h = 5381;
+          for (var i = 0; i < str.length; i++) { h = ((h << 5) + h) ^ str.charCodeAt(i); }
+          return (h >>> 0).toString(36);
+        }
+        function storageKey(message) { return STORAGE_PREFIX + hashMessage(message); }
+        function isDismissed(message) {
+          try { return localStorage.getItem(storageKey(message)) === "1"; }
+          catch (e) { return false; }
+        }
+        function markDismissed(message) {
+          try { localStorage.setItem(storageKey(message), "1"); }
+          catch (e) { /* storage blocked — dismissal only lasts this session */ }
+        }
+        function reserveSpace() {
+          var body = document.body;
+          body.style.paddingTop = "";
+          var base = parseFloat(getComputedStyle(body).paddingTop) || 0;
+          body.style.paddingTop = (base + banner.offsetHeight) + "px";
+        }
+        function releaseSpace() { document.body.style.paddingTop = ""; }
+
+        var message = typeof cfg.message === "string" ? cfg.message.trim() : "";
+        var severity = SEVERITIES[cfg.severity] ? cfg.severity : "info";
+
+        if (cfg.active !== true) { return; }
+        if (!message) { return; }
+        if (!inWindow(Date.now(), cfg.startsAt, cfg.endsAt)) { return; }
+        if (isDismissed(message)) { return; }
+
+        banner.classList.add("alert-banner--" + severity);
+        msgEl.textContent = message;
+        banner.hidden = false;
+
+        reserveSpace();
+        var onResize = function () { if (!banner.hidden) { reserveSpace(); } };
+        window.addEventListener("resize", onResize);
+
+        closeBtn.addEventListener("click", function () {
+          markDismissed(message);
+          banner.hidden = true;
+          releaseSpace();
+          window.removeEventListener("resize", onResize);
+        });
+      })();
+    </script>
+  </body>
+</html>
