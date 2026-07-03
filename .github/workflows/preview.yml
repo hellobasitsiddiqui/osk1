@@ -35,6 +35,21 @@
 #           already vetted in deploy.yml / hosting-deploy.yml / image.yml; the
 #           trailing "# vX.Y.Z" records the human-readable tag. The PR comment uses
 #           `gh api` with the built-in GITHUB_TOKEN (no extra action to pin).
+#
+# DB ISOLATION (OSK-58 root fix — see docs/adr/0006-isolate-pr-preview-database.md,
+#   LESSONS L12): the preview backend migrates its OWN database `osk_preview` on the
+#   SAME Cloud SQL instance, NEVER the prod `osk` DB/Flyway history. This is the whole
+#   reason a preview once stalled prod: it applied its Flyway migrations to prod `osk`
+#   out of merge order, gapping the history so Flyway `validate` failed at boot and the
+#   startup probe (and prod deploy) failed (TM-65). `PREVIEW_DB_NAME` below is the single
+#   isolation value; an idempotent "ensure preview database" step creates `osk_preview`
+#   if missing; a hard guard fails the job if the preview DB name is ever empty or `osk`.
+#
+# STATUS: this workflow is currently DISABLED (`gh workflow disable "PR preview
+#   environments"`) — it was turned off to stop the prod pollution and is NOT re-enabled
+#   by this change. The prod-safety fix is baked into the file (so even an accidental
+#   re-enable is prod-safe), but restoring the feature needs one IAM grant + a first live
+#   green run. The exact, ordered re-enable steps live in ADR-0006 ("Re-enable runbook").
 
 name: PR preview environments
 
@@ -72,6 +87,12 @@ env:
   IMAGE_REPO: europe-west2-docker.pkg.dev/openskeleton-one/osk-backend/backend
   INSTANCE_CONNECTION_NAME: openskeleton-one:europe-west2:osk-pg
   RUNTIME_SA: 476227744481-compute@developer.gserviceaccount.com
+  # OSK-58 ROOT FIX — the ONE value that isolates previews from prod. Preview backends
+  # migrate this DEDICATED database on the same osk-pg instance, so a preview's Flyway
+  # can never touch the prod `osk` schema/history again (the DB_NAME below is the only
+  # runtime-env difference from deploy.yml). This must NEVER be `osk`; the ensure-DB step
+  # guards it. Deliberately its OWN database, not the prod one — see ADR-0006 / LESSONS L12.
+  PREVIEW_DB_NAME: osk_preview
   # The service's stable (untagged) Cloud Run URL — used only to DERIVE the tagged
   # preview URL (https://pr-<N>---<same host>) without duplicating the project
   # number/region. Matches deploy.yml's SERVICE_URL.
@@ -114,6 +135,38 @@ jobs:
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+
+      # OSK-58 ROOT FIX — ensure the ISOLATED preview database exists BEFORE we build
+      # or deploy anything, and fail fast (before the costly image build) if it can't
+      # be guaranteed. Two guarantees:
+      #   1. HARD GUARD — refuse to run if PREVIEW_DB_NAME is empty or `osk`. A preview
+      #      must migrate its own DB, never prod; this makes a mis-edit a red build, not
+      #      a silent prod-pollution.
+      #   2. IDEMPOTENT CREATE-IF-MISSING — `describe` (read-only) then `create` ONLY when
+      #      absent (the CREATE DATABASE IF NOT EXISTS equivalent). This touches ONLY the
+      #      `osk_preview` database on the shared instance; it never reads, writes, or
+      #      alters the prod `osk` database or its data, and creating a database only ever
+      #      makes a new EMPTY one. The instance id is derived from INSTANCE_CONNECTION_NAME
+      #      (project:region:instance) so there is one source of truth.
+      # NOTE: needs the deploy SA to hold cloudsql.databases.create/get (a one-time IAM
+      #       grant — see ADR-0006 re-enable runbook); today it has only cloudsql.client.
+      - name: Ensure isolated preview database exists (never prod osk)
+        run: |
+          set -euo pipefail
+          INSTANCE_NAME="${INSTANCE_CONNECTION_NAME##*:}"
+          if [ -z "${PREVIEW_DB_NAME}" ] || [ "${PREVIEW_DB_NAME}" = "osk" ]; then
+            echo "::error::PREVIEW_DB_NAME must be a dedicated preview database, never the prod 'osk' DB (got '${PREVIEW_DB_NAME}'). Refusing to build or deploy a preview."
+            exit 1
+          fi
+          echo "Ensuring preview database '${PREVIEW_DB_NAME}' on instance '${INSTANCE_NAME}' (prod 'osk' is never touched)."
+          if gcloud sql databases describe "${PREVIEW_DB_NAME}" \
+               --instance="${INSTANCE_NAME}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+            echo "Preview database '${PREVIEW_DB_NAME}' already exists — nothing to create."
+          else
+            echo "Preview database '${PREVIEW_DB_NAME}' not found — creating it (one-time, idempotent)."
+            gcloud sql databases create "${PREVIEW_DB_NAME}" \
+              --instance="${INSTANCE_NAME}" --project="${PROJECT_ID}" --quiet
+          fi
 
       # BuildKit for the PR image build/push (same as image.yml).
       - name: Set up Docker Buildx
@@ -168,8 +221,11 @@ jobs:
           provenance: false
 
       # Deploy the PR image as a NO-TRAFFIC, TAGGED revision of the live service.
-      # Reuses deploy.yml's runtime SA, Cloud SQL, secret, env-vars, probes and
+      # Reuses deploy.yml's runtime SA, Cloud SQL instance, secret, probes and
       # resource flags verbatim — the ONLY differences are:
+      #   * DB_NAME is the ISOLATED preview DB (${PREVIEW_DB_NAME}), NOT prod `osk`
+      #     (OSK-58 root fix) — so this revision's Flyway migrates only osk_preview and
+      #     can never gap the prod schema/history again (the whole cause of TM-65).
       #   * APP_PUBLIC_BASE_URL is the preview URL (this revision's own tagged URL),
       #   * --no-traffic --tag=pr-<N> REPLACES --to-latest, so 0% of production
       #     traffic ever reaches it while it still gets a stable preview URL.
@@ -187,7 +243,7 @@ jobs:
             --service-account="${RUNTIME_SA}" \
             --add-cloudsql-instances="${INSTANCE_CONNECTION_NAME}" \
             --set-secrets="DB_PASSWORD=osk-db-app-password:latest" \
-            --set-env-vars="^@^SPRING_PROFILES_ACTIVE=prod@INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME}@DB_NAME=osk@DB_USERNAME=app@APP_ENVIRONMENT_NAME=prod@GOOGLE_CLOUD_PROJECT=${PROJECT_ID}@APP_PUBLIC_BASE_URL=${PREVIEW_URL}" \
+            --set-env-vars="^@^SPRING_PROFILES_ACTIVE=prod@INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME}@DB_NAME=${PREVIEW_DB_NAME}@DB_USERNAME=app@APP_ENVIRONMENT_NAME=prod@GOOGLE_CLOUD_PROJECT=${PROJECT_ID}@APP_PUBLIC_BASE_URL=${PREVIEW_URL}" \
             --min-instances=0 --max-instances=2 \
             --cpu=1 --memory=1Gi --cpu-boost \
             --port=8080 --timeout=300 \
