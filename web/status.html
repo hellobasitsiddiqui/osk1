@@ -37,6 +37,22 @@
       poll the backend /health; we never render its value. See web/config.js.
     -->
     <script src="/config.js"></script>
+    <!--
+      OSK-127: apply the persisted theme BEFORE first paint to avoid a flash of
+      the wrong theme. Only "sketch" is a non-default; anything else (including a
+      blocked/absent localStorage) falls through to the default dark theme.
+    -->
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem("osk-theme") === "sketch") {
+            document.documentElement.setAttribute("data-theme", "sketch");
+          }
+        } catch (e) {
+          /* localStorage unavailable — keep the default theme */
+        }
+      })();
+    </script>
     <style>
       /* Shared palette with index.html, plus status colours drawn from the same
          GitHub Primer family the base page already uses (#0d1117 etc.) so green/
@@ -177,6 +193,124 @@
         /* Comfortable tap target for the footer home link. */
         .foot a { display: inline-block; padding: 0.25rem 0; }
       }
+
+      /* ================================================================== *
+       * OSK-127 — selectable "sketch / blueprint" theme + its toggle.
+       * Everything theme-specific is scoped under [data-theme="sketch"], so
+       * the default dark theme above is left exactly as it was. The toggle
+       * button style is theme-agnostic (reads the shared palette vars). This
+       * whole block is identical across index.html, status.html and ops.html.
+       * ================================================================== */
+
+      /* Toggle control: quiet, metadata-sized pill that works in both themes.
+         It reads the shared vars, so it re-skins automatically. margin-left:
+         auto right-aligns it inside the flex footers and is a no-op elsewhere. */
+      .theme-switch { margin-top: 1rem; }
+      .theme-toggle {
+        font: inherit;
+        font-size: 0.78rem;
+        line-height: 1.2;
+        color: var(--muted);
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.3rem 0.75rem;
+        margin-left: auto;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      .theme-toggle:hover { color: var(--fg); border-color: var(--muted); }
+      .theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      /* --- Sketch palette. Same specificity as :root (both target the root
+         element) but declared later, so these win when data-theme="sketch".
+         The existing rules already read these vars, so most of the page
+         re-colours for free. --- */
+      [data-theme="sketch"] {
+        --bg: #eef1e6;                      /* pale graph paper */
+        --fg: #16283b;                      /* dark ink */
+        --muted: #5b6b78;                   /* faded pencil */
+        --accent: #1f5aa8;                  /* blueprint blue */
+        --border: #34465a;                  /* ink border */
+        --panel: rgba(255, 255, 255, 0.55); /* translucent paper — grid shows through */
+        --ok: #2f8f3e;                      /* darker status hues for light-paper contrast */
+        --warn: #b3781a;
+        --down: #cf3b32;
+      }
+
+      /* Graph paper: a fine minor grid (24px) plus heavier lines every 5th cell
+         (120px), layered via repeating-linear-gradients. background-color +
+         background-image (not the shorthand) cleanly overrides the default
+         page's radial-gradient. Monospace body = technical-drawing feel; system
+         fonts only, so the page still makes zero external requests. */
+      [data-theme="sketch"] body {
+        background-color: var(--bg);
+        background-image:
+          repeating-linear-gradient(0deg,  rgba(47, 74, 110, 0.07) 0 1px, transparent 1px 24px),
+          repeating-linear-gradient(90deg, rgba(47, 74, 110, 0.07) 0 1px, transparent 1px 24px),
+          repeating-linear-gradient(0deg,  rgba(47, 74, 110, 0.16) 0 1px, transparent 1px 120px),
+          repeating-linear-gradient(90deg, rgba(47, 74, 110, 0.16) 0 1px, transparent 1px 120px);
+        background-attachment: fixed;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+      /* Monospace looks cramped with the default negative tracking. */
+      [data-theme="sketch"] h1,
+      [data-theme="sketch"] h2,
+      [data-theme="sketch"] h3 { letter-spacing: 0; }
+
+      /* Hand-drawn surfaces: the irregular border-radius trick gives a wobbly,
+         sketched outline; the hard offset shadow reads like a second marker
+         pass; the translucent paper fill lets the grid ghost through. */
+      [data-theme="sketch"] .card,
+      [data-theme="sketch"] .panel {
+        background: var(--panel);
+        border: 1.5px solid var(--border);
+        border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+        box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+      }
+      /* index's brand card has no padding by default — give the paper card room. */
+      [data-theme="sketch"] .card { padding: 1.75rem 1.5rem; }
+      /* Alternate the wobble so repeated panels don't look stamped. */
+      [data-theme="sketch"] .panel:nth-of-type(even) {
+        border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
+      }
+      /* Banner / health strip: keep their coloured left accent (it re-skins via
+         the vars) and just add the paper fill, wobble + shadow. No border-color
+         is set here, so the state classes' left accent is preserved. */
+      [data-theme="sketch"] .banner,
+      [data-theme="sketch"] .health {
+        background: var(--panel);
+        border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+        box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+      }
+      /* status.html chart shells: solid inked wobble + light paper fill so they
+         read on paper instead of the dark default. */
+      [data-theme="sketch"] .chart {
+        background: var(--panel);
+        border-style: solid;
+        border-radius: 15px 225px 15px 255px / 225px 15px 255px 15px;
+        box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .chart__placeholder {
+        background:
+          repeating-linear-gradient(90deg, transparent 0 22px, rgba(47, 74, 110, 0.10) 22px 23px);
+      }
+      /* index brand chip → blueprint outline box (was a solid gradient). */
+      [data-theme="sketch"] .logo {
+        background: rgba(31, 90, 168, 0.10);
+        color: var(--accent);
+        border: 1.5px solid var(--accent);
+        border-radius: 14px 225px 18px 255px / 255px 16px 225px 15px;
+        box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+      }
+      /* index pill tag → inked outline in the sketch palette. */
+      [data-theme="sketch"] .tag { border-color: var(--border); color: var(--muted); }
+      /* The toggle itself, sketchified: wobbly ink outline. */
+      [data-theme="sketch"] .theme-toggle {
+        border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+        box-shadow: 1px 2px 0 rgba(22, 40, 59, 0.13);
+      }
     </style>
   </head>
   <body>
@@ -255,6 +389,9 @@
       <footer class="foot">
         <a href="/">&larr; OpenSkeleton home</a>
         <span id="refresh-note">Auto-refreshes every 30s from the public /health endpoint.</span>
+        <!-- OSK-127: theme toggle. Switches Default (dark) <-> Sketch
+             (graph-paper) and persists the choice in localStorage. -->
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Theme: Default</button>
       </footer>
     </main>
 
@@ -401,6 +538,51 @@
         renderMetrics();
         poll();
         setInterval(poll, POLL_MS);
+      })();
+    </script>
+
+    <script>
+      // OSK-127: theme toggle + persistence. Vanilla, dependency-free, and kept
+      // fully separate from the page's existing logic (the health poll above is
+      // untouched). The persisted theme is already applied pre-paint by the
+      // <head> script; here we wire the button and keep localStorage in sync.
+      // XSS-safe: only textContent + a fixed attribute value are ever written —
+      // no innerHTML, no untrusted data.
+      (function () {
+        "use strict";
+        var KEY = "osk-theme";
+        var root = document.documentElement;
+        var btn = document.getElementById("theme-toggle");
+        if (!btn) { return; }
+
+        function isSketch() { return root.getAttribute("data-theme") === "sketch"; }
+
+        // Reflect the active theme in the button label + pressed state.
+        function sync() {
+          btn.textContent = isSketch() ? "Theme: Sketch" : "Theme: Default";
+          btn.setAttribute("aria-pressed", isSketch() ? "true" : "false");
+        }
+
+        // Apply a theme, persist it, and refresh the button.
+        function apply(theme) {
+          if (theme === "sketch") {
+            root.setAttribute("data-theme", "sketch");
+          } else {
+            root.removeAttribute("data-theme");
+          }
+          try {
+            localStorage.setItem(KEY, theme);
+          } catch (e) {
+            /* persistence unavailable — theme still applies for this session */
+          }
+          sync();
+        }
+
+        btn.addEventListener("click", function () {
+          apply(isSketch() ? "default" : "sketch");
+        });
+
+        sync(); // correct the label for whatever the pre-paint script decided
       })();
     </script>
   </body>
