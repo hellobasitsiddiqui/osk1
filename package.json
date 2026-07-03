@@ -1,0 +1,24 @@
+{
+  "name": "openskeleton-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Capacitor tooling manifest for the OpenSkeleton mobile shells. Wraps the existing static web app (web/) in a native Android WebView host (android/). This is deliberately NOT a native rewrite: the web/ app is the app, Capacitor is just the shell so push/GPS/camera/biometric can arrive later as Capacitor plugins (separate tickets) without giving up the instant web-deploy cadence.",
+  "scripts": {
+    "// scripts": "These are thin wrappers around the Capacitor CLI so contributors don't have to remember the flags. `npx cap sync android` copies web/ into the native project and updates native deps; run it after every web/ change before building the APK.",
+    "sync": "cap sync android",
+    "copy": "cap copy android",
+    "open:android": "cap open android",
+    "doctor": "cap doctor"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.4.1",
+    "@capacitor/core": "8.4.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.4.1",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

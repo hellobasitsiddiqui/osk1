@@ -1,0 +1,132 @@
+# android.yml — Android (Capacitor) compile check for the mobile shell (OSK-146).
+#
+# WHAT: When the mobile scaffold changes, this workflow installs JDK 17 + Node 22
+#       + the Android SDK on an ubuntu runner, then runs
+#         npm ci  ->  npx cap sync android  ->  ./gradlew assembleDebug
+#       to prove the native Android project still compiles into a debug APK. It
+#       is a compile GATE only — no signing, no distribution.
+#
+# WHY:  The `android/` project wraps the existing `web/` app in a Capacitor
+#       WebView (OSK-146). This Mac-less, reproducible check is what proves the
+#       native shell builds, since most contributors won't have an Android SDK
+#       locally. (For the record, `assembleDebug` was also run successfully on the
+#       authoring machine before this workflow was added.)
+#
+# PATH-GATE (why the triggers are narrow): Android runners are slow and the SDK
+#       download is heavy, so this job must NEVER run on unrelated PRs. It fires
+#       ONLY when the mobile scaffold itself changes: android/**, the Capacitor
+#       config, the root package manifest/lockfile, or this workflow.
+#         - `web/**` is deliberately NOT a trigger: `npx cap sync` merely copies
+#           the static web assets into the APK, so a web content change cannot
+#           break `assembleDebug`. Gating the slow Android job on the frequently
+#           edited web/ tree would run it on nearly every PR for ~zero benefit.
+#           web/ is validated by its own gates (ci.yml / e2e.yml / hosting-deploy).
+#
+# SCOPE (deliberately deferred to later MOBILE-epic tickets, NOT here):
+#         - release signing + Play Store / internal-track distribution
+#           (OSK-128 / OSK-153 / OSK-157 / OSK-159) — needs a keystore, which is
+#           a human-owned secret and lives in NO repo file;
+#         - native plugins (push / GPS / camera / biometric) + the webview/ bridge;
+#         - on-device / instrumented e2e tests.
+#
+# SECURITY: every third-party action is pinned to a full commit SHA (never a
+#           moving tag) with the human-readable version in a trailing comment, so
+#           a re-pointed tag cannot inject code into CI. Default permissions are
+#           read-only. No secrets are used or needed — a debug build is unsigned.
+
+name: Android
+
+# Run on PRs into main (catch breakage before merge) and on pushes to main (keep
+# main honest), but only when the mobile scaffold paths change (see PATH-GATE).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/android.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/android.yml'
+
+# Least-privilege: this job only reads the repo and uploads an artifact (which
+# needs no extra scope), so read-only contents is sufficient.
+permissions:
+  contents: read
+
+# Cancel a superseded in-progress run for the same ref when a new commit lands,
+# so slow Android builds don't pile up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android:
+    name: Build debug APK (compile check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # JDK 17 — the minimum for the Android Gradle Plugin 8.x used by
+      # Capacitor 8. (The backend CI uses 21; the Android toolchain only needs
+      # 17, so pin the lower floor here.)
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Node 22 — the Capacitor 8 CLI aborts on Node 20, so pin the >=22 floor.
+      - name: Set up Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Install Android cmdline-tools + platform-tools and accept SDK licenses.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+
+      # Install exactly the SDK components the generated project resolves against
+      # (see android/variables.gradle: compileSdk/targetSdk 36; AGP 8.13 default
+      # build-tools 35.0.0). Explicit install avoids relying on AGP auto-download.
+      - name: Install required SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+
+      # Install the Capacitor tooling from the committed lockfile (reproducible).
+      - name: Install Capacitor tooling
+        run: npm ci
+
+      # Copy web/ into the native project and refresh native deps. This
+      # regenerates the git-ignored bits (assets/public, capacitor config JSON,
+      # capacitor-cordova-android-plugins) so the build uses fresh, real inputs.
+      - name: Capacitor sync (android)
+        run: npx cap sync android
+
+      # The actual compile gate: build an unsigned debug APK.
+      - name: Assemble debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # Publish the APK so reviewers can download/sideload it from the run.
+      # Not a release artifact — unsigned debug only.
+      - name: Upload debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

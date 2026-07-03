@@ -61,6 +61,11 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # --- Android (mobile shell) -------------------------------------------------
+# The Capacitor-generated native project lives at android/ (OSK-146). It ships
+# its own android/.gitignore covering build/, .gradle/, local.properties, the
+# copied web assets (app/src/main/assets/public) and other generated files, all
+# of which `npx cap sync android` regenerates — so only the source project is
+# committed. The entries below are the repo-wide belt-and-braces equivalents.
 *.apk
 *.aab
 *.ap_
@@ -68,6 +73,12 @@ yarn-error.log*
 local.properties
 .cxx/
 captures/
+# ...but DO keep the Gradle wrapper JAR: it's committed so a fresh clone / CI
+# runner can build with ./gradlew and no pre-installed Gradle. The root *.jar
+# rule (Java section above) otherwise hides it, and the root-anchored negation
+# there doesn't reach the nested android/ path — so re-include it explicitly for
+# any gradle/wrapper location.
+!**/gradle/wrapper/gradle-wrapper.jar
 
 # --- macOS ------------------------------------------------------------------
 .DS_Store
