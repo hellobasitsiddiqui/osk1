@@ -3,13 +3,19 @@ package io.openskeleton.backend.user;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.openskeleton.backend.audit.AuditAction;
+import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.user.User.Role;
 import io.openskeleton.backend.web.NotFoundException;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -35,6 +41,11 @@ class UserServiceProvisioningTest {
 
     @Mock
     private UserRepository userRepository;
+
+    // The OSK-99 change-recording seam. Mocked so we can assert the history event is
+    // appended exactly on a real change (and never on a no-op) without a database.
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private UserService userService;
@@ -102,15 +113,48 @@ class UserServiceProvisioningTest {
     }
 
     @Test
-    void updateProfileSetsDisplayNameAndPersists() {
+    void updateProfileSetsDisplayNamePersistsAndRecordsExactlyOneHistoryEvent() {
         User user = new User("uid-p", "p@example.com", null);
+        UUID userId = UUID.randomUUID();
+        user.setId(userId); // the audit target_id is the persisted user's id
         when(userRepository.findByFirebaseUid("uid-p")).thenReturn(Optional.of(user));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
+        // First-ever set: null → "New Name" (exercises the null old-value path too).
         User result = userService.updateProfile("uid-p", "New Name");
 
         assertThat(result.getDisplayName()).isEqualTo("New Name");
         verify(userRepository).save(user);
+
+        // AC-1: exactly one PROFILE_UPDATED event, actor = uid, target = the user id, with
+        // {field, old, new} metadata carrying the true before/after (old is null here).
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
+        verify(auditService)
+                .record(
+                        eq("uid-p"),
+                        eq(AuditAction.PROFILE_UPDATED),
+                        eq(ProfileChange.TARGET_TYPE),
+                        eq(userId.toString()),
+                        metadata.capture());
+        assertThat(metadata.getValue())
+                .containsEntry("field", ProfileChange.FIELD_DISPLAY_NAME)
+                .containsEntry("old", null)
+                .containsEntry("new", "New Name");
+    }
+
+    @Test
+    void updateProfileWithUnchangedValueIsANoOpAndRecordsNothing() {
+        // Idempotent PATCH: the display name already equals the requested value, so there is
+        // no write and no history event — history captures genuine edits, not every request.
+        User user = new User("uid-same", "same@example.com", "Stable Name");
+        when(userRepository.findByFirebaseUid("uid-same")).thenReturn(Optional.of(user));
+
+        User result = userService.updateProfile("uid-same", "Stable Name");
+
+        assertThat(result).isSameAs(user);
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(auditService);
     }
 
     @Test
@@ -119,5 +163,6 @@ class UserServiceProvisioningTest {
 
         assertThatThrownBy(() -> userService.updateProfile("uid-missing", "x")).isInstanceOf(NotFoundException.class);
         verify(userRepository, never()).save(any());
+        verifyNoInteractions(auditService);
     }
 }

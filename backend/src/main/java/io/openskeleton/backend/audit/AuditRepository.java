@@ -1,6 +1,8 @@
 package io.openskeleton.backend.audit;
 
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 /**
@@ -16,4 +18,23 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * {@code UserRepository} convention; the append-only discipline is a usage contract
  * enforced by {@code AuditService} and the entity's immutability, not by hiding methods.
  */
-public interface AuditRepository extends JpaRepository<AuditEvent, UUID> {}
+public interface AuditRepository extends JpaRepository<AuditEvent, UUID> {
+
+    /**
+     * Page over the events a given actor produced for a single action, e.g. one user's
+     * {@code PROFILE_UPDATED} events for the {@code GET /api/v1/me/history} feature (OSK-99).
+     *
+     * <p>Both filter columns are indexed ({@code idx_audit_events_actor}, and
+     * {@code idx_audit_events_created_at} backs the typical newest-first ordering), so this
+     * stays cheap as the append-only table grows. Ordering is intentionally left to the
+     * {@link Pageable} rather than baked into the method name, so the caller controls it via
+     * the shared pagination convention (OSK-87) — the history endpoint defaults it to
+     * {@code createdAt DESC}.
+     *
+     * @param actorFirebaseUid the acting user's Firebase UID to filter by
+     * @param action the single action to filter by
+     * @param pageable page/size/sort (size is capped by {@code PageableConfig})
+     * @return the requested page of matching events
+     */
+    Page<AuditEvent> findByActorFirebaseUidAndAction(String actorFirebaseUid, AuditAction action, Pageable pageable);
+}
