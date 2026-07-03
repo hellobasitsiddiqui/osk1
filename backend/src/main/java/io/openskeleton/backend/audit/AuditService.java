@@ -1,6 +1,8 @@
 package io.openskeleton.backend.audit;
 
 import java.util.Map;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -71,5 +73,25 @@ public class AuditService {
             Map<String, Object> metadata) {
         var event = new AuditEvent(actorFirebaseUid, action, targetType, targetId, metadata);
         return auditRepository.save(event);
+    }
+
+    /**
+     * Read seam for the audit log: page over the events a single actor produced for one
+     * action. Added for OSK-99's {@code GET /api/v1/me/history}, which surfaces a caller's
+     * own {@code PROFILE_UPDATED} events, but kept action-agnostic so it is reusable by any
+     * future "this actor's X events" view without widening the write seam's concerns.
+     *
+     * <p>Read-only and side-effect free: it never appends, so it upholds the append-only
+     * guarantee. The {@code @Transactional(readOnly = true)} mirrors the read methods on
+     * {@code UserService} — the query runs in a lightweight read-only transaction.
+     *
+     * @param actorFirebaseUid the acting user's Firebase UID to filter by
+     * @param action the single action to filter by (e.g. {@link AuditAction#PROFILE_UPDATED})
+     * @param pageable page/size/sort from the shared pagination convention (OSK-87)
+     * @return the requested page of matching events
+     */
+    @Transactional(readOnly = true)
+    public Page<AuditEvent> findByActorAndAction(String actorFirebaseUid, AuditAction action, Pageable pageable) {
+        return auditRepository.findByActorFirebaseUidAndAction(actorFirebaseUid, action, pageable);
     }
 }

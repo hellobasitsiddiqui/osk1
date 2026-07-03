@@ -1,9 +1,17 @@
 package io.openskeleton.backend.api;
 
+import io.openskeleton.backend.audit.AuditEvent;
+import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.auth.FirebaseAuthenticationFilter;
+import io.openskeleton.backend.common.PagedResponse;
+import io.openskeleton.backend.user.ProfileChange;
 import io.openskeleton.backend.user.User;
 import io.openskeleton.backend.user.UserService;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -41,9 +49,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class MeController {
 
     private final UserService userService;
+    private final AuditService auditService;
 
-    public MeController(UserService userService) {
+    public MeController(UserService userService, AuditService auditService) {
         this.userService = userService;
+        this.auditService = auditService;
     }
 
     /**
@@ -105,6 +115,38 @@ public class MeController {
         userService.provisionFromToken(uid, email);
         User updated = userService.updateProfile(uid, body.displayName());
         return toCurrentUser(updated);
+    }
+
+    /**
+     * {@code GET /api/v1/me/history} — the caller's own profile-change history, newest
+     * first and paginated (OSK-99).
+     *
+     * <p>Each entry is one per-field edit recorded by {@link UserService#updateProfile}
+     * (field, old → new, actor, timestamp). The history is read straight from the
+     * append-only audit log ({@code audit_events}, OSK-80) by filtering to the caller's own
+     * {@code PROFILE_UPDATED} events — so there is no separate history table to keep in sync.
+     *
+     * <p><b>Identity from the verified token only</b> (mirrors {@code GET /me}): the actor
+     * uid comes from the auth-filter attribute, never a body/param, so a caller can only ever
+     * see their own changes. Unlike {@code GET/PATCH /me} this does <i>not</i> provision a
+     * {@code users} row first — a caller with no edits simply gets an empty page; there is
+     * nothing to create just to read history.
+     *
+     * <p><b>Pagination (OSK-87):</b> the {@link Pageable} is resolved by the shared
+     * convention — {@code size} is hard-capped by {@code PageableConfig}. We override only
+     * the default to newest-first ({@code createdAt DESC}) with the app's default page size
+     * (20), since a change log is read most-recent-first; callers may still page/sort via the
+     * standard {@code page}/{@code size}/{@code sort} params. Results are wrapped in the
+     * canonical {@link PagedResponse} envelope (items are {@link ProfileChange} DTOs, never
+     * the {@link AuditEvent} entity).
+     */
+    @GetMapping("/me/history")
+    public PagedResponse<ProfileChange> history(
+            HttpServletRequest request,
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        String uid = (String) request.getAttribute(FirebaseAuthenticationFilter.UID_ATTRIBUTE);
+        Page<AuditEvent> events = auditService.findByActorAndAction(uid, ProfileChange.ACTION, pageable);
+        return PagedResponse.of(events.map(ProfileChange::from));
     }
 
     /** Map the persisted entity to the wire shape (role rendered as its enum name). */

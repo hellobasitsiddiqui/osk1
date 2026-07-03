@@ -1,6 +1,8 @@
 package io.openskeleton.backend.user;
 
+import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.web.NotFoundException;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -25,9 +27,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final AuditService auditService;
 
-    public UserService(UserRepository userRepository) {
+    public UserService(UserRepository userRepository, AuditService auditService) {
         this.userRepository = userRepository;
+        this.auditService = auditService;
     }
 
     /**
@@ -141,9 +145,19 @@ public class UserService {
      * to already exist — the controller provisions first — so a missing row is a genuine
      * {@link NotFoundException} (404).
      *
+     * <p><b>Change history (OSK-99).</b> When the value actually changes, a per-field
+     * history event is appended through the audit seam ({@link AuditService#record}) in the
+     * SAME transaction — so the profile write and its history row commit atomically (or roll
+     * back together). It records {@code who} ({@code firebaseUid}), {@code what}
+     * ({@link io.openskeleton.backend.audit.AuditAction#PROFILE_UPDATED}), the target user
+     * id, and a {@code {field, old, new}} metadata payload, all encoded by {@link ProfileChange}.
+     * An idempotent PATCH that resubmits the current value is intentionally a <b>no-op</b>: no
+     * UPDATE, no history row (guarded by the {@link Objects#equals} check below) — history
+     * records genuine edits, not every request.
+     *
      * @param firebaseUid the verified uid identifying which user to update
      * @param displayName the new display name (may be {@code null} to clear it)
-     * @return the updated, persisted user
+     * @return the updated, persisted user (or the unchanged user when nothing changed)
      * @throws NotFoundException if no active user exists for the uid
      */
     @Transactional
@@ -151,7 +165,27 @@ public class UserService {
         User user = userRepository
                 .findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> new NotFoundException("No active user with firebaseUid " + firebaseUid));
+
+        String previousDisplayName = user.getDisplayName();
+        // Null-safe compare: only a genuine change is persisted and recorded. Objects.equals
+        // handles the null cases (first-ever set: null → value; clear: value → null) without
+        // an NPE, and short-circuits a redundant PATCH into a no-op.
+        if (Objects.equals(previousDisplayName, displayName)) {
+            return user;
+        }
+
         user.setDisplayName(displayName);
-        return userRepository.save(user);
+        User saved = userRepository.save(user);
+        // Append the per-field change to the append-only audit log, reusing audit_events
+        // (no bespoke history table): "this user's profile changes" is a clean actor +
+        // PROFILE_UPDATED filter, read back by GET /api/v1/me/history. This joins the
+        // current @Transactional, so the update and its history entry are atomic.
+        auditService.record(
+                firebaseUid,
+                ProfileChange.ACTION,
+                ProfileChange.TARGET_TYPE,
+                saved.getId().toString(),
+                ProfileChange.metadata(ProfileChange.FIELD_DISPLAY_NAME, previousDisplayName, displayName));
+        return saved;
     }
 }
