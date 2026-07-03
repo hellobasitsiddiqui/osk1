@@ -201,6 +201,17 @@ The human asked **~10 times** to add all tickets to Sprint 1. Each time the agen
 ### H19 — Wave-0 GitHub settings: enable "Dependency graph" up front (dependency-review is red on EVERY PR without it)
 For the **entire run**, the `Dependency review` CI check failed on every single PR with `Dependency review is not supported on this repository. Please ensure that Dependency graph is enabled` — a repo **Settings → Code security** toggle, not a code problem (first seen as F7/H9 on OSK-24). It's advisory (non-blocking; `main` isn't gated by it), but it makes every PR look partly-red and masks whether a *real* dependency issue exists — noise the whole fleet learned to ignore, which is itself a risk. The human enabled it mid-run (Settings → Code security and analysis → **Dependency graph** → Enable). **Wave-0 fix:** put "enable Dependency graph (+ Dependabot alerts)" in the kickoff GitHub-settings checklist alongside branch-protection / GHAS, so the very first PR's checks are clean and a genuine dependency-review failure is actually visible. Pairs with [[H9]] and [[H17]] (pre-config the settings/allowlists before "go"). Flows OUT → engine kickoff settings checklist.
 
+### H20 — Consolidate ALL cloud/org/settings prerequisites into ONE wave-−1 human bring-up runbook (run BEFORE the fleet starts)
+The human's insight after the OSK-51 org-policy detour: "can we not do this at the beginning, like wave 0 or wave-−1?" **Yes.** Across this entire run the fleet stalled, one at a time, on human-only cloud/org/settings steps that were each discovered *mid-run exactly when a ticket needed them* — a death-by-a-thousand-walls pattern:
+- gcloud auth + ADC-with-`firebase`-scope, and billing ([[H11]]);
+- runtime-SA IAM roles — `roles/cloudsql.client`, `secretmanager.secretAccessor`, `iam.serviceAccountTokenCreator` ([[H13]], OSK-133);
+- deploy-SA roles — `run.admin`, `iam.serviceAccountUser`, `firebaserules.admin` (OSK-107);
+- GitHub **Dependency graph** toggle ([[H19]]/[[H9]]) + branch-protection/GHAS decision;
+- the **Domain-Restricted-Sharing org policy** (`constraints/iam.allowedPolicyMemberDomains`) that blocks `allUsers` public access (OSK-51) — set via `gcloud org-policies set-policy` with `spec.rules[].allowAll: true` scoped to the project;
+- Firebase project + **web-app config (apiKey/authDomain)** needed before any web login can be built (OSK-44/OSK-74).
+
+**The fix (flows OUT → engine kickoff):** a single **wave-−1 "bring-up" runbook** — a checklist + copy-paste command block the human runs ONCE before "go" — that provisions/authorises every one of the above, plus the classifier allow-rules for the specific high-severity verbs the fleet is permitted to self-serve ([[H17]]). Then the fleet never hits a cloud/settings wall mid-run; the only in-run HITL is genuine judgement calls, not setup. Consolidates [[H11]] [[H13]] [[H17]] [[H19]] into one pre-run gate.
+
 ---
 
 _Living document — append a dated finding/lesson whenever the fleet teaches one; fold the durable ones out via docs PRs. **Every HITL intervention gets an H-entry above (H6/H10).**_
