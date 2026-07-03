@@ -4,10 +4,18 @@ import io.openskeleton.backend.audit.AuditEvent;
 import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.auth.FirebaseAuthenticationFilter;
 import io.openskeleton.backend.common.PagedResponse;
+import io.openskeleton.backend.user.NotificationPreference;
 import io.openskeleton.backend.user.ProfileChange;
+import io.openskeleton.backend.user.ProfileUpdate;
 import io.openskeleton.backend.user.User;
 import io.openskeleton.backend.user.UserService;
+import io.openskeleton.backend.validation.ValidLocale;
+import io.openskeleton.backend.validation.ValidTimezone;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -57,28 +65,87 @@ public class MeController {
     }
 
     /**
-     * The persisted identity of the current caller, as returned by both endpoints.
+     * The persisted identity + profile of the current caller, as returned by both endpoints.
+     * Extends the original OSK-66 identity ({@code uid}/{@code email}/{@code displayName}/
+     * {@code role}) with the OSK-67 self-service profile fields; any the caller has not set
+     * are {@code null} (rendered as absent JSON), except {@code notificationPreference} which
+     * always has a value (defaults to {@code EMAIL}).
      *
-     * @param uid         the verified Firebase user id (always present)
-     * @param email       the caller's email, or {@code null} if the token carried none
+     * @param uid the verified Firebase user id (always present)
+     * @param email the caller's email, or {@code null} if the token carried none
      *     (e.g. anonymous/phone-only sign-in)
-     * @param displayName the caller's display name, or {@code null} until set via
-     *     {@code PATCH /me} (the auth filter does not publish the token's display name,
-     *     so a freshly-provisioned user starts with none)
-     * @param role        the caller's persisted role (the {@code USER} least-privilege
-     *     default at provisioning time)
+     * @param displayName the caller's display name, or {@code null} until set via {@code PATCH /me}
+     * @param role the caller's persisted role (the {@code USER} least-privilege default)
+     * @param firstName the caller's given name, or {@code null}
+     * @param lastName the caller's family name, or {@code null}
+     * @param city the caller's city, or {@code null}
+     * @param age the caller's age, or {@code null}
+     * @param phone the caller's phone, or {@code null}
+     * @param notificationPreference the caller's notification channel (never {@code null}; defaults EMAIL)
+     * @param timezone the caller's IANA timezone id, or {@code null}
+     * @param locale the caller's BCP-47 locale tag, or {@code null}
      */
-    public record CurrentUser(String uid, String email, String displayName, String role) {}
+    public record CurrentUser(
+            String uid,
+            String email,
+            String displayName,
+            String role,
+            String firstName,
+            String lastName,
+            String city,
+            Integer age,
+            String phone,
+            NotificationPreference notificationPreference,
+            String timezone,
+            String locale) {}
 
     /**
-     * Request body for {@code PATCH /api/v1/me}: only the fields a caller may change on
-     * their own profile. Kept intentionally tiny — {@code displayName} is the sole
-     * mutable field today; identity ({@code uid}/{@code email}) and authorization
-     * ({@code role}) are derived from the verified token, never accepted from the body.
+     * Request body for {@code PATCH /api/v1/me}: the fields a caller may change on their own
+     * profile — {@code displayName} (OSK-76) plus the richer OSK-67 fields. Identity
+     * ({@code uid}/{@code email}) and authorization ({@code role}) are derived from the
+     * verified token, never accepted from the body.
      *
-     * @param displayName the desired display name ({@code null} clears it)
+     * <p><b>Sparse PATCH.</b> Every field is optional: a field absent from (or {@code null}
+     * in) the JSON leaves that field unchanged, so a partial PATCH never clobbers the others.
+     * The validation constraints below only fire for a <i>present</i> (non-null) value —
+     * {@code null} always passes — and any violation becomes a 400 {@code problem+json} via
+     * the global {@code MethodArgumentNotValidException} handler:
+     * <ul>
+     *   <li>{@code age} must be in the sane human range 13..120,</li>
+     *   <li>{@code phone} must be non-blank (lenient — any non-whitespace content),</li>
+     *   <li>{@code timezone} must be a valid IANA zone id (e.g. {@code Europe/London}),</li>
+     *   <li>{@code locale} must be a well-formed BCP-47 tag (e.g. {@code en-GB}).</li>
+     * </ul>
+     * {@code notificationPreference} is typed as the {@link NotificationPreference} enum, so an
+     * unrecognised value is rejected during JSON binding.
+     *
+     * @param displayName the desired display name, or {@code null} to leave unchanged
+     * @param firstName the desired given name, or {@code null} to leave unchanged
+     * @param lastName the desired family name, or {@code null} to leave unchanged
+     * @param city the desired city, or {@code null} to leave unchanged
+     * @param age the desired age (13..120), or {@code null} to leave unchanged
+     * @param phone the desired phone (non-blank), or {@code null} to leave unchanged
+     * @param notificationPreference the desired channel, or {@code null} to leave unchanged
+     * @param timezone the desired IANA timezone id, or {@code null} to leave unchanged
+     * @param locale the desired BCP-47 locale tag, or {@code null} to leave unchanged
      */
-    public record UpdateProfileRequest(String displayName) {}
+    public record UpdateProfileRequest(
+            String displayName,
+            String firstName,
+            String lastName,
+            String city,
+            @Min(value = 13, message = "must be at least 13") @Max(value = 120, message = "must be at most 120") Integer age,
+            @Pattern(regexp = ".*\\S.*", message = "must not be blank") String phone,
+            NotificationPreference notificationPreference,
+            @ValidTimezone String timezone,
+            @ValidLocale String locale) {
+
+        /** Map this API request to the domain-level {@link ProfileUpdate} the service consumes. */
+        ProfileUpdate toProfileUpdate() {
+            return new ProfileUpdate(
+                    displayName, firstName, lastName, city, age, phone, notificationPreference, timezone, locale);
+        }
+    }
 
     /**
      * {@code GET /api/v1/me} — return the caller's PERSISTED profile, provisioning the
@@ -107,13 +174,13 @@ public class MeController {
      * guaranteed to exist — then apply the update.
      */
     @PatchMapping("/me")
-    public CurrentUser updateMe(HttpServletRequest request, @RequestBody UpdateProfileRequest body) {
+    public CurrentUser updateMe(HttpServletRequest request, @Valid @RequestBody UpdateProfileRequest body) {
         String uid = (String) request.getAttribute(FirebaseAuthenticationFilter.UID_ATTRIBUTE);
         String email = (String) request.getAttribute(FirebaseAuthenticationFilter.EMAIL_ATTRIBUTE);
         // Ensure the persisted row exists before updating it (identity from the token
-        // only); then set the client-supplied displayName on the persisted user.
+        // only); then apply the client-supplied field changes (sparse — see ProfileUpdate).
         userService.provisionFromToken(uid, email);
-        User updated = userService.updateProfile(uid, body.displayName());
+        User updated = userService.updateProfile(uid, body.toProfileUpdate());
         return toCurrentUser(updated);
     }
 
@@ -155,6 +222,14 @@ public class MeController {
                 user.getFirebaseUid(),
                 user.getEmail(),
                 user.getDisplayName(),
-                user.getRole().name());
+                user.getRole().name(),
+                user.getFirstName(),
+                user.getLastName(),
+                user.getCity(),
+                user.getAge(),
+                user.getPhone(),
+                user.getNotificationPreference(),
+                user.getTimezone(),
+                user.getLocale());
     }
 }
