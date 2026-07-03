@@ -35,6 +35,19 @@ live here. Real app tooling (bundler, client-side router) lands in later tickets
   console (**OSK-92**, needs firebase-scoped ADC **OSK-38**) and those two values are
   injected exactly like `apiBaseUrl`; the other three firebase values are known,
   non-secret project identifiers and are prefilled.
+- `tour.js` — the onboarding **product tour** (OSK-105): per-page **coachmarks**
+  (spotlight/backdrop cut-out + arrow bubble with Next/Back/Skip and "2 of 5"
+  progress) plus a pausable, replayable **whole-site walkthrough** that chains the
+  per-page tours across pages (progress persisted in `localStorage`). Self-contained
+  and hand-rolled (no CDN/library): every page opts in with a single
+  `<script src="/tour.js"></script>` include; the module injects its own themed styles
+  (palette tokens, so it re-skins incl. the sketch theme) and a "?" launcher. A new
+  visitor is auto-started once (guarded by a `localStorage` flag, and suppressed for
+  automated `navigator.webdriver` sessions so it never fights the e2e specs). The
+  optional `window.__APP_CONFIG__.tour` block (`enabled` / `autoStartFirstRun`) is a
+  runtime kill-switch. Pure state/persistence logic is exported for the headless Node
+  simulation `web/e2e/tour.simulation.cjs`; the in-browser walkthrough is
+  `web/e2e/tests/tour.spec.ts`.
 - `nginx.conf` — server config: SPA `try_files` fallback to `index.html` plus
   caching headers (immutable 1-year cache for hashed assets, `no-cache` for
   `index.html`) and a `/healthz` liveness endpoint.

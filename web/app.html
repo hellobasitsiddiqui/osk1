@@ -831,5 +831,13 @@
         });
       })();
     </script>
+    <!--
+      OSK-105: onboarding product tour — per-page coachmarks + a pausable, replayable
+      whole-site walkthrough. Self-contained: this ONE include injects its own themed
+      styles + a "?" launcher and holds its per-page step registry internally, so no
+      other page markup changes. Loads after config.js (in <head>) so it can read the
+      optional window.__APP_CONFIG__.tour block. Identical include across every page.
+    -->
+    <script src="/tour.js"></script>
   </body>
 </html>
