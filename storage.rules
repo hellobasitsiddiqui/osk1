@@ -1,0 +1,41 @@
+rules_version = '2';
+
+// Firebase Storage security rules for project `openskeleton-one` (OSK-106).
+//
+// SECURE BY DEFAULT — everything is denied unless a rule below EXPLICITLY grants
+// access. Firebase Storage evaluates rules as a UNION: a request is allowed only
+// if some matching `allow` grants it, and denied otherwise. There is therefore
+// no way for the catch-all deny to be "overridden" by a later rule — it simply
+// grants nothing, and any path with no matching grant falls through to the
+// engine's default of DENY. No public read, no anonymous access, no wide-open
+// buckets.
+//
+// The single grant here is the per-user private area that the upcoming
+// avatar-upload feature (OSK-83) will use: a signed-in user may read and write
+// ONLY objects under their own `/users/{uid}/**` prefix. This is a deliberately
+// conservative baseline — tighten later (size/content-type limits) when OSK-83
+// lands; never loosen it to public.
+//
+// Deployed by CD (best-effort) from .github/workflows/hosting-deploy.yml on
+// merge to `main`. Publishing requires the deploy SA (gha-deployer) to hold
+// `roles/firebaserules.admin` — see infra/README.md and GENESIS §A2 (OSK-107).
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Deny-all baseline. Documents intent explicitly; `if false` grants nothing,
+    // so every path not matched by a more specific grant below stays denied.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Per-user private area (basis for OSK-83 avatar uploads). A request is
+    // allowed only when the caller is authenticated (`request.auth != null`) AND
+    // the `{uid}` path segment equals their own uid — so a user can never read
+    // or write another user's objects.
+    match /users/{uid}/{allPaths=**} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == uid;
+    }
+  }
+}
