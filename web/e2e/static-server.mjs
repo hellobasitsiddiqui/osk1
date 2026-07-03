@@ -43,6 +43,7 @@ const CONTENT_TYPES = {
 const REWRITES = {
   "/status": "/status.html",
   "/ops": "/ops.html",
+  "/help": "/help.html",
 };
 
 // Resolve a request URL path to an absolute file path INSIDE ROOT, or null if the

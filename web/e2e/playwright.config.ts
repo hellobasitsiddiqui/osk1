@@ -39,10 +39,42 @@ export default defineConfig({
     trace: "on-first-retry",
   },
 
+  // Visual-regression snapshot config (OSK-109). Only the nightly `visual` project
+  // captures screenshots (tests/visual.spec.ts); the smoke/theme specs don't. A small
+  // pixel tolerance absorbs sub-pixel font anti-aliasing between the (Linux) machine
+  // that generated the committed baselines and the (Linux) ubuntu-latest nightly runner,
+  // without hiding a genuine layout/colour regression.
+  expect: {
+    toHaveScreenshot: {
+      // Allow up to 2% of pixels to differ — enough for AA/hinting jitter, far below
+      // any real layout or colour break.
+      maxDiffPixelRatio: 0.02,
+      // Freeze CSS animations/transitions and hide the text caret so a capture is never
+      // taken mid-animation (both are Playwright defaults; set explicitly for intent).
+      animations: "disabled",
+      caret: "hide",
+      // Compare at CSS pixels so a high-DPI capture doesn't double the baseline size.
+      scale: "css",
+    },
+  },
+
   projects: [
     {
+      // The fast PR/main gate: the smoke + theme specs. It explicitly IGNORES the visual
+      // spec, so the visual-regression work (OSK-109) never runs here and never slows the
+      // PR gate. The PR/push/dispatch job in e2e.yml selects this with --project=chromium.
       name: "chromium",
+      testIgnore: /visual\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      // NIGHTLY-ONLY visual-regression project (OSK-109). Runs ONLY tests/visual.spec.ts,
+      // and only when the scheduled job in e2e.yml selects it with --project=visual (and
+      // sets VISUAL=1, which the spec's guard also requires). A fixed viewport keeps the
+      // full-page captures deterministic across machines.
+      name: "visual",
+      testMatch: /visual\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 720 } },
     },
   ],
 

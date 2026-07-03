@@ -16,10 +16,13 @@ never touches the backend build or the web container. It is gated **off the PR p
 web/e2e/
 ├── package.json           # this package + its only dep (@playwright/test)
 ├── package-lock.json      # pinned install for reproducible CI (npm ci)
-├── playwright.config.ts   # headless Chromium; boots the static server; baseURL
+├── playwright.config.ts   # headless Chromium; boots the static server; baseURL; projects
 ├── static-server.mjs      # zero-dep static server, mirrors firebase.json rewrites
 ├── tests/
-│   └── smoke.spec.ts      # the static-pages smoke walkthrough
+│   ├── smoke.spec.ts      # the static-pages smoke walkthrough
+│   ├── theme.spec.ts      # the default <-> sketch theme-switch walkthrough
+│   ├── visual.spec.ts     # NIGHTLY-ONLY visual-regression snapshots (both themes)
+│   └── visual.spec.ts-snapshots/   # committed baseline PNGs for the above
 └── README.md              # this file
 ```
 
@@ -72,10 +75,66 @@ exactly what the spec proves.
 ## When it runs
 
 The dedicated workflow [`.github/workflows/e2e.yml`](../../.github/workflows/e2e.yml)
-runs this suite on **push to `main`** and **manual `workflow_dispatch` only** — never
-on feature pull requests, so the PR gate (`ci.yml`) stays fast. It installs the
-Chromium browser, runs `npx playwright test` (which serves `web/` itself), and uploads
-the HTML report + screenshots/video as an artifact **on failure**.
+has **two jobs**:
+
+- **`e2e` (fast gate)** — the smoke + theme specs. Runs on **push to `main`**, on
+  **`pull_request` when the PR touches `web/**`** (OSK-108 no-rot guard), and on manual
+  **`workflow_dispatch`**. It runs `npx playwright test --project=chromium`, which
+  **ignores** `visual.spec.ts`, so the visual snapshots never slow the PR/main gate. It
+  is still deliberately absent from `ci.yml`.
+- **`visual` (nightly)** — the visual-regression spec. Runs **only** on the nightly
+  `schedule:` cron (`0 3 * * *` UTC), **never** on a PR or push, via
+  `VISUAL=1 npx playwright test --project=visual`.
+
+Both jobs upload the HTML report + screenshots/video/traces as an artifact **on
+failure** (the visual report embeds the expected/actual/diff images).
+
+## Visual regression (nightly only)
+
+`tests/visual.spec.ts` captures full-page screenshots of the four key pages
+(`/`, `/status`, `/ops`, `/help`) in **both** themes (default + sketch) with
+`expect(page).toHaveScreenshot()`, and compares them against committed baseline PNGs in
+`tests/visual.spec.ts-snapshots/`.
+
+**Why nightly only** — pixel snapshots are brittle (font hinting, sub-pixel
+anti-aliasing) and slower than DOM assertions, so they must not gate every PR. They are
+gated off the default run by **two** independent guards:
+
+1. a dedicated Playwright **`project` named `visual`** — the PR/main job runs
+   `--project=chromium` (smoke + theme), the nightly job runs `--project=visual`; and
+2. a **`VISUAL` env guard** — the spec `test.skip`s itself unless `VISUAL` is set, which
+   only the nightly job does. So a bare `npx playwright test` (locally or on a PR) skips
+   the whole visual suite.
+
+**Determinism** — the backend is down in CI, so each page is pinned to its resolved
+`unavailable`/`outage` state before capture, and the volatile bits are neutralised:
+
+- the live health **"as of" timestamps** (`#banner-time`, `#health-time`) and the
+  **build stamp** (`#web-build` / `#backend-build`) are hidden with injected CSS
+  (`visibility: hidden`) — the AC's "CSS to neutralize" option (chosen over `mask[]`,
+  whose box would track the elements' variable text width and jitter);
+- the **health dot / banner state** is pinned by *waiting* for each page's live probe to
+  settle (web reachable / backend unavailable) before the snapshot.
+
+### Updating baselines
+
+Baselines are committed and are **platform-specific** — the nightly runs on Linux
+(`ubuntu-latest`), so the committed PNGs are the **Linux** renders. Regenerate them in a
+Linux environment that matches CI (do **not** commit macOS/Windows renders — they won't
+match the runner):
+
+```bash
+# From the repo root, using the official Playwright image pinned to our version.
+# Mounts web/ (the static-server's web root) and keeps node_modules container-local.
+docker run --rm -v "$PWD/web":/web -v /web/e2e/node_modules \
+  -w /web/e2e -e VISUAL=1 mcr.microsoft.com/playwright:v1.61.1-noble \
+  bash -lc "npm ci && npx playwright test --project=visual --update-snapshots"
+```
+
+Then review the changed PNGs (`git status tests/visual.spec.ts-snapshots/`) and commit
+them. The nightly job runs **without** `--update-snapshots`, so it **fails** on a real
+visual drift rather than silently rewriting the baseline — an intentional change is a
+deliberate `--update-snapshots` + commit.
 
 ## Add a new walkthrough
 
