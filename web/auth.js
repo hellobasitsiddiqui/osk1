@@ -373,6 +373,113 @@ function oskAvatarObjectPath(uid, file, nowMs) {
   return "users/" + safeUid + "/avatar/" + stamp + "." + ext;
 }
 
+// ===========================================================================
+// PASSWORDLESS EMAIL-CODE LOGIN (OSK-129) — the DEFAULT sign-in method.
+// The user enters their email, the backend emails a short numeric code, they
+// enter the code, and the backend returns a Firebase CUSTOM TOKEN which the
+// browser exchanges via signInWithCustomToken. Everything here is PURE (no
+// globals, no Firebase): the two backend calls take an INJECTED fetch-like
+// function, so web/e2e/email-code-login.simulation.cjs drives the whole
+// email -> code -> signInWithCustomToken flow (and its error cases) with a FAKE
+// fetch + a STUBBED Firebase, no browser. The browser bootstrap below wires
+// these to real fetch + Firebase signInWithCustomToken.
+// ===========================================================================
+
+// Build the two backend endpoint URLs from the app's backend base (trailing
+// slash trimmed so we never produce "//api"). "" (same-origin) is honoured.
+function oskEmailCodeUrls(apiBaseUrl) {
+  var base = (apiBaseUrl || "").replace(/\/+$/, "");
+  return {
+    start: base + "/api/v1/auth/email-code/start",
+    verify: base + "/api/v1/auth/email-code/verify",
+  };
+}
+
+// Lightweight client-side email sanity check — the backend's @Email validation
+// is authoritative; this only stops an obviously-empty/garbage submit before we
+// bother the network. Deliberately permissive (one @ with something either side).
+function oskIsLikelyEmail(email) {
+  if (typeof email !== "string") { return false; }
+  var v = email.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+}
+
+// Map an HTTP status from the email-code endpoints to SHORT, user-facing copy.
+// Centralised so the send + verify steps surface consistent messages. PURE, so
+// the sim asserts the mapping directly.
+function oskDescribeEmailCodeError(status) {
+  switch (status) {
+    case 400:
+      return "Enter a valid email address.";
+    case 401:
+      return "That code is incorrect or has expired. Request a new one.";
+    case 429:
+      return "Too many attempts. Please wait a moment and try again.";
+    case 503:
+      return "Sign-in is temporarily unavailable. Please try again shortly.";
+    default:
+      return "Something went wrong. Please try again.";
+  }
+}
+
+// Attach a `.status` to a friendly Error so callers can branch on it if needed.
+function oskEmailCodeError(status) {
+  var e = new Error(oskDescribeEmailCodeError(status));
+  e.status = status;
+  return e;
+}
+
+// POST /start with the given fetch-like function. Resolves `true` when the code
+// was accepted for delivery (202/2xx); rejects with a friendly Error carrying
+// `.status` otherwise. Never throws synchronously.
+function oskStartEmailCode(fetchImpl, apiBaseUrl, email) {
+  var urls = oskEmailCodeUrls(apiBaseUrl);
+  return fetchImpl(urls.start, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ email: email }),
+  }).then(function (res) {
+    if (res && (res.status === 202 || res.ok)) { return true; }
+    throw oskEmailCodeError(res ? res.status : 0);
+  });
+}
+
+// POST /verify with the given fetch-like function. Resolves the Firebase custom
+// TOKEN string on success (200 with { token }); rejects with a friendly Error
+// carrying `.status` on any failure (bad/expired code -> 401, rate-limited ->
+// 429, unavailable -> 503) or a malformed success body.
+function oskVerifyEmailCode(fetchImpl, apiBaseUrl, email, code) {
+  var urls = oskEmailCodeUrls(apiBaseUrl);
+  return fetchImpl(urls.verify, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ email: email, code: code }),
+  })
+    .then(function (res) {
+      if (!res || !res.ok) { throw oskEmailCodeError(res ? res.status : 0); }
+      return res.json();
+    })
+    .then(function (body) {
+      if (!body || !body.token) { throw oskEmailCodeError(200); }
+      return body.token;
+    });
+}
+
+// Is Firebase PHONE auth ("try another way") enabled for this config? BOTH gates
+// must hold: auth is configured at all (real apiKey — the OSK-92 gate) AND
+// `providers.phone === true`. It defaults OFF: enabling the Firebase Phone
+// provider + an SMS region/quota is a HUMAN step (OSK-134/137/143) that cannot be
+// done from code, so the client path stays config-gated and dark until then.
+// STRICT true only, so a truthy-but-wrong value never shows a button that fails.
+function oskIsPhoneAuthEnabled(firebaseCfg) {
+  if (!oskIsFirebaseConfigured(firebaseCfg)) { return false; }
+  var providers = firebaseCfg && firebaseCfg.providers;
+  if (providers && typeof providers === "object" && "phone" in providers) {
+    return providers.phone === true;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Node export. When this file is `require()`d (CommonJS), expose the pure helpers
 // so the guard logic can be simulated without a browser. `typeof module` is
@@ -394,6 +501,14 @@ if (typeof module !== "undefined" && module.exports) {
     buildProviderWith: oskBuildProviderWith,
     // OSK-83 — avatar upload (pure path builder; the browser upload lives on OSKAuth).
     avatarObjectPath: oskAvatarObjectPath,
+    // OSK-129 — passwordless email-code login (pure helpers; the browser calls +
+    // signInWithCustomToken live on OSKAuth below).
+    emailCodeUrls: oskEmailCodeUrls,
+    isLikelyEmail: oskIsLikelyEmail,
+    describeEmailCodeError: oskDescribeEmailCodeError,
+    startEmailCode: oskStartEmailCode,
+    verifyEmailCode: oskVerifyEmailCode,
+    isPhoneAuthEnabled: oskIsPhoneAuthEnabled,
   };
 }
 
@@ -629,6 +744,52 @@ if (typeof window !== "undefined") {
       });
     }
 
+    // OSK-129: complete sign-in from a Firebase CUSTOM TOKEN (minted by the backend's
+    // email-code verify endpoint). This is the last hop of the passwordless flow — the
+    // browser exchanges the token for a real session, after which onAuthStateChanged
+    // fires and the guard reveals the app. Rejects clearly if auth isn't configured.
+    function signInWithCustomToken(token) {
+      return ensureLoaded().then(function () {
+        if (!auth || !authMod) { throw new Error("Auth is not configured."); }
+        return authMod.signInWithCustomToken(auth, token).then(function (cred) { return cred.user; });
+      });
+    }
+
+    // OSK-129: request a login code for `email` (POST /start). Resolves when the code was
+    // accepted for delivery; rejects with a friendly, `.status`-carrying Error. Uses the
+    // pure oskStartEmailCode with the real fetch + the backend base from app config.
+    function startEmailCode(email) {
+      var apiBaseUrl = (window.__APP_CONFIG__ || {}).apiBaseUrl;
+      return oskStartEmailCode(fetch.bind(window), apiBaseUrl, email);
+    }
+
+    // OSK-129: verify `code` for `email` (POST /verify) and, on success, complete sign-in
+    // with the returned custom token. Resolves with the signed-in Firebase user; rejects
+    // with a friendly, `.status`-carrying Error (bad/expired code -> 401, rate-limited ->
+    // 429, unavailable -> 503). This is the single call the sign-in UI makes.
+    function verifyEmailCode(email, code) {
+      var apiBaseUrl = (window.__APP_CONFIG__ || {}).apiBaseUrl;
+      return oskVerifyEmailCode(fetch.bind(window), apiBaseUrl, email, code).then(function (token) {
+        return signInWithCustomToken(token);
+      });
+    }
+
+    // OSK-129 / OSK-134: the "try another way" SMS phone seam. Config-gated + flagged: it
+    // rejects unless phone auth is explicitly enabled in config (providers.phone === true),
+    // which stays OFF until a human enables the Firebase Phone provider + an SMS region/quota
+    // (OSK-134/137/143). When enabled, it delegates to Firebase signInWithPhoneNumber (which
+    // needs a RecaptchaVerifier the caller supplies). Built now so the client path exists and
+    // is testable, WITHOUT enabling SMS.
+    function signInWithPhoneNumber(phoneNumber, recaptchaVerifier) {
+      return ensureLoaded().then(function () {
+        if (!auth || !authMod) { throw new Error("Auth is not configured."); }
+        if (!oskIsPhoneAuthEnabled(cfg)) {
+          throw new Error("Phone sign-in is not enabled yet.");
+        }
+        return authMod.signInWithPhoneNumber(auth, phoneNumber, recaptchaVerifier);
+      });
+    }
+
     // A snapshot of the current auth state for the guard's pure view computation.
     // Returns a fresh copy so callers can't mutate our internal state.
     function getState() {
@@ -660,6 +821,17 @@ if (typeof window !== "undefined") {
       getIdToken: getIdToken,
       // OSK-83 — direct-to-Storage avatar upload (returns { objectPath, downloadUrl }).
       uploadAvatar: uploadAvatar,
+      // OSK-129 — passwordless email-code login (the DEFAULT method) + the SMS phone seam.
+      // startEmailCode(email) -> request a code; verifyEmailCode(email, code) -> verify +
+      // signInWithCustomToken; signInWithCustomToken(token) is the raw last hop. The phone
+      // path is config-gated + flagged off (enabling SMS is a human step, OSK-134/137/143).
+      startEmailCode: startEmailCode,
+      verifyEmailCode: verifyEmailCode,
+      signInWithCustomToken: signInWithCustomToken,
+      signInWithPhoneNumber: signInWithPhoneNumber,
+      isPhoneAuthEnabled: function () { return oskIsPhoneAuthEnabled(cfg); },
+      isLikelyEmail: oskIsLikelyEmail,
+      describeEmailCodeError: oskDescribeEmailCodeError,
 
       // OSK-131 — provider config helpers, bound to THIS page's firebase config so the
       // sign-in UI can gate + render buttons without re-reading config. Same pure

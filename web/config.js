@@ -193,11 +193,16 @@ window.__APP_CONFIG__ = {
     //   apple    — HUMAN: configure Sign in with Apple (Apple Developer: Services ID,
     //              Team ID, Key ID + private key) under Firebase console -> Sign-in
     //              method -> Apple, THEN flip this to true.
+    //   phone    — OSK-129/OSK-134: the SMS "try another way" sign-in. HUMAN: enable the
+    //              Firebase Phone provider AND provision an SMS region/quota (OSK-134/137/143),
+    //              THEN flip this to true. Stays OFF here so the phone affordance is shown as
+    //              "not enabled yet" and no SMS is ever attempted from a fresh checkout.
     // Omit this block entirely to fall back to "Google only". Unknown keys are ignored.
     providers: {
       google: true,
       facebook: false,
       apple: false,
+      phone: false,
     },
   },
 };
