@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.openskeleton.backend.push.PushData;
 import io.openskeleton.backend.push.PushNotificationService;
 import io.openskeleton.backend.user.NotificationPreference;
 import io.openskeleton.backend.user.User;
@@ -67,6 +68,20 @@ class NotificationServiceTest {
         service.notifyUser(USER_ID, new Notification("Title", "Body", data));
 
         verify(pushNotificationService).sendToUser(USER_ID, "Title", "Body", data);
+        verifyNoInteractions(emailSender);
+    }
+
+    @Test
+    void pushPreferenceForwardsTheDeepLinkRouteToThePushService() {
+        // End-to-end contract (OSK-166): a withRoute notification's route must survive the
+        // NotificationService -> PushNotificationService hop under the documented data key,
+        // so the push service can put it into the FCM data map for the tap-handler.
+        when(userRepository.findById(USER_ID))
+                .thenReturn(Optional.of(user(NotificationPreference.PUSH, "dave@example.com")));
+
+        service.notifyUser(USER_ID, Notification.withRoute("Title", "Body", "/orders/9"));
+
+        verify(pushNotificationService).sendToUser(USER_ID, "Title", "Body", Map.of(PushData.ROUTE, "/orders/9"));
         verifyNoInteractions(emailSender);
     }
 
