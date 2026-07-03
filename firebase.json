@@ -25,6 +25,10 @@
         "destination": "/help.html"
       },
       {
+        "source": "/app",
+        "destination": "/app.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
@@ -38,6 +42,12 @@
       },
       {
         "source": "/config.js",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        ]
+      },
+      {
+        "source": "/auth.js",
         "headers": [
           { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
         ]

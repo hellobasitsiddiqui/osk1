@@ -14,10 +14,27 @@ live here. Real app tooling (bundler, client-side router) lands in later tickets
 
 - `index.html` — minimal, self-contained branded landing page (no external
   requests, no secrets). Loads `config.js` for its runtime API config.
-- `config.js` — runtime config exposing `window.__APP_CONFIG__.apiBaseUrl`. The
-  committed value is the **local dev default** (`http://127.0.0.1:8080`); CD
-  rewrites it with the real backend URL at deploy time and refuses to ship a
-  loopback value to the live channel (see Deploy & rollback below).
+- `app.html` — **protected account area** (OSK-74), reachable at `/app`. An auth
+  guard renders it only when signed in; when signed out it shows an email/password
+  form plus "Sign in with Google", and when the Firebase Web App isn't registered
+  yet it shows a clear "auth not configured" notice. When signed in it calls the
+  backend `GET /api/v1/me` with the Firebase ID token as proof of end-to-end wiring.
+- `auth.js` — the web auth module (OSK-74). Reads `window.__APP_CONFIG__.firebase`,
+  lazily loads the Firebase JS SDK (v10 modular) from gstatic at a **pinned** version,
+  and exposes `window.OSKAuth` (`signInWithEmailPassword`, `signInWithGoogle`,
+  `signOut`, `onAuthStateChanged`, `getIdToken`) plus the **pure** guard helpers
+  (`computeGuardView` / `applyGuardView`) it also exports for Node unit-simulation. If
+  `apiKey` is empty it never crashes — it resolves to a "not configured" state and
+  makes no network calls.
+- `config.js` — runtime config exposing `window.__APP_CONFIG__.apiBaseUrl`, the alert
+  block, and (OSK-74) a `firebase` block for the auth guard. The committed
+  `apiBaseUrl` is the **local dev default** (`http://127.0.0.1:8080`); CD rewrites it
+  with the real backend URL at deploy time and refuses to ship a loopback value to the
+  live channel (see Deploy & rollback below). The `firebase.apiKey` / `firebase.appId`
+  are left **empty** on purpose — a human registers the Firebase Web App in the
+  console (**OSK-92**, needs firebase-scoped ADC **OSK-38**) and those two values are
+  injected exactly like `apiBaseUrl`; the other three firebase values are known,
+  non-secret project identifiers and are prefilled.
 - `nginx.conf` — server config: SPA `try_files` fallback to `index.html` plus
   caching headers (immutable 1-year cache for hashed assets, `no-cache` for
   `index.html`) and a `/healthz` liveness endpoint.

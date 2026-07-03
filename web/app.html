@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<!--
+  app.html — OpenSkeleton protected account area (OSK-74, the web-auth keystone).
+
+  WHAT: the first GATED page in the web front-end. It is split into three regions
+  that the auth guard shows/hides based on Firebase Auth state:
+    - a NOTICE region  — shown for the "auth not configured" / loading / error states,
+    - a SIGN-IN region — shown when signed OUT (email+password form + "Sign in with
+      Google"), and
+    - a protected APP region — shown ONLY when signed IN. As proof of end-to-end
+      wiring it calls the backend `GET /api/v1/me` with the caller's Firebase ID token
+      (`Authorization: Bearer …`) and renders the returned profile. Sign-out is here too.
+
+  Design (mirrors index/status/ops/help so the pages read as one product):
+  - Self-contained page: inlined CSS + guard/theme/alert scripts, no bundler. The only
+    external code is the Firebase SDK, which web/auth.js loads LAZILY from gstatic at a
+    PINNED version — and only when auth is actually configured (empty apiKey => no
+    network at all). Same dark GitHub-Primer palette + sketch theme + alert banner as
+    the siblings.
+  - Config-driven: the Firebase Web App config lives in config.js
+    (window.__APP_CONFIG__.firebase); the backend base URL is config.js's apiBaseUrl.
+    Nothing here is hardcoded, so this page works the instant the human fills in the
+    apiKey/appId minted by the Firebase Web App registration (OSK-92).
+  - Graceful "not configured": until OSK-92 supplies apiKey, the guard shows a clear
+    notice and keeps the protected content hidden — it never crashes or blanks.
+  - XSS-safe: every dynamic string (notice text, error messages, the /api/v1/me profile)
+    is written with textContent / createElement only — never innerHTML.
+
+  Routing: reachable at the clean path "/app" via a Firebase Hosting rewrite
+  ("/app" -> "/app.html", added to firebase.json ahead of the SPA catch-all) and also
+  directly at "/app.html".
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenSkeleton Account</title>
+    <!--
+      Runtime config, loaded exactly as the sibling pages load it: a plain (non-module,
+      non-hashed) script so CD can inject config at DEPLOY time without rebuilding.
+      auth.js reads window.__APP_CONFIG__.firebase; the guard reads apiBaseUrl.
+    -->
+    <script src="/config.js"></script>
+    <!--
+      OSK-127: apply the persisted theme BEFORE first paint to avoid a flash of the
+      wrong theme. Only "sketch" is a non-default; anything else falls through to the
+      default dark theme. Identical to the other pages.
+    -->
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem("osk-theme") === "sketch") {
+            document.documentElement.setAttribute("data-theme", "sketch");
+          }
+        } catch (e) {
+          /* localStorage unavailable — keep the default theme */
+        }
+      })();
+    </script>
+    <!--
+      OSK-74: the auth module. Plain <script src> (non-module) like every other page
+      script; it lazily dynamic-import()s the pinned Firebase SDK itself. Loaded in the
+      <head> (not deferred) so window.OSKAuth exists before the guard script at the foot
+      of the body runs. Guarded internally against a missing apiKey ("auth not
+      configured"), so it can never crash the page.
+    -->
+    <script src="/auth.js"></script>
+    <style>
+      /* Shared palette + surfaces with status.html / ops.html / help.html so all the
+         pages are visually identical. Same Primer green/amber/red status hues. */
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --accent: #4c8bf5;
+        --muted: #8b949e;
+        --border: #30363d;
+        --panel: #161b22;
+        --ok: #3fb950; /* green — operational / success */
+        --warn: #d29922; /* amber — degraded */
+        --down: #f85149; /* red   — error / unavailable */
+        --pending: #8b949e; /* grey — still checking */
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background: radial-gradient(circle at 50% 0%, #161b22 0%, var(--bg) 60%);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        line-height: 1.5;
+        padding: 2rem 1.25rem 3rem;
+      }
+      .wrap { max-width: 34rem; margin: 0 auto; }
+
+      /* --- Header (logo + title), echoing index.html's brand mark ----------- */
+      .head { display: flex; align-items: center; gap: 0.9rem; margin-bottom: 1.5rem; }
+      .logo {
+        width: 48px; height: 48px; flex: 0 0 auto;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--accent), #7c3aed);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.3rem; font-weight: 700; color: #fff;
+      }
+      h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.02em; }
+      .sub { color: var(--muted); margin: 0.15rem 0 0; font-size: 0.9rem; }
+
+      /* --- Panels (shared with ops/status/help) ---------------------------- */
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        padding: 1.25rem 1.35rem;
+        margin-bottom: 1.25rem;
+      }
+      .panel h2 {
+        font-size: 1.05rem; margin: 0 0 0.35rem; letter-spacing: -0.01em;
+      }
+      .panel__hint { color: var(--muted); font-size: 0.85rem; margin: 0 0 1rem; }
+      .panel__hint code {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 0.9em; color: var(--fg);
+      }
+
+      /* --- Guard NOTICE (not-configured / loading / error) ----------------- */
+      /* A quiet, left-accented strip like ops.html's health box. Neutral by default;
+         it never looks like an error unless it is one. */
+      .notice {
+        border-left-width: 5px;
+        border-left-color: var(--pending);
+      }
+      .notice__text { margin: 0; color: var(--fg); }
+
+      /* --- Sign-in form ----------------------------------------------------- */
+      .field { display: block; margin-bottom: 0.85rem; }
+      .field__label {
+        display: block; font-size: 0.8rem; color: var(--muted);
+        margin-bottom: 0.3rem;
+      }
+      .field__input {
+        width: 100%;
+        font: inherit;
+        color: var(--fg);
+        background: #0d1117;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.6rem 0.7rem;
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      .field__input:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+        border-color: var(--accent);
+      }
+
+      /* Buttons: a shared base + a primary/google/ghost variant. All >=44px tall so
+         they are comfortable tap targets on touch screens (matches OSK-140). */
+      .btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+        min-height: 44px;
+        font: inherit; font-weight: 600;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        padding: 0.55rem 1rem;
+        cursor: pointer;
+        -webkit-appearance: none; appearance: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .btn[disabled] { opacity: 0.6; cursor: default; }
+      .btn--primary {
+        width: 100%;
+        color: #fff; background: var(--accent); border-color: transparent;
+      }
+      .btn--primary:hover:not([disabled]) { filter: brightness(1.08); }
+      .btn--google { width: 100%; color: var(--fg); background: transparent; }
+      .btn--google:hover:not([disabled]) { border-color: var(--muted); }
+      .btn--google__icon { width: 18px; height: 18px; flex: 0 0 auto; }
+      .btn--ghost {
+        color: var(--muted); background: transparent;
+        min-height: 0; padding: 0.4rem 0.8rem; font-weight: 500; font-size: 0.85rem;
+      }
+      .btn--ghost:hover { color: var(--fg); border-color: var(--muted); }
+
+      /* "or" divider between the email form and the Google button. */
+      .divider {
+        display: flex; align-items: center; gap: 0.75rem;
+        color: var(--muted); font-size: 0.78rem; text-transform: uppercase;
+        letter-spacing: 0.06em; margin: 1rem 0;
+      }
+      .divider::before, .divider::after {
+        content: ""; flex: 1 1 auto; height: 1px; background: var(--border);
+      }
+
+      /* Inline sign-in error (bad password, popup closed, …). Hidden until set. */
+      .form-error {
+        margin: 0.85rem 0 0;
+        color: var(--down);
+        font-size: 0.85rem;
+      }
+      .form-error[hidden] { display: none; }
+
+      /* --- Protected app region -------------------------------------------- */
+      .app__bar {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 0.75rem; margin-bottom: 0.35rem;
+      }
+      .app__bar h2 { margin: 0; }
+      .profile__status { color: var(--muted); font-size: 0.9rem; margin: 0.5rem 0 0; }
+      /* Profile as a two-column key/value list. Rendered from /api/v1/me with
+         createElement + textContent only (XSS-safe). */
+      .profile__fields {
+        margin: 0.75rem 0 0;
+        display: grid;
+        grid-template-columns: minmax(6rem, auto) 1fr;
+        gap: 0.4rem 1rem;
+      }
+      .profile__fields[hidden] { display: none; }
+      .profile__fields dt {
+        color: var(--muted); font-size: 0.82rem; text-transform: uppercase;
+        letter-spacing: 0.04em; align-self: center;
+      }
+      .profile__fields dd {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 0.9rem;
+        overflow-wrap: anywhere;
+      }
+
+      /* --- Footer (shared with ops/status/help) ---------------------------- */
+      .foot {
+        display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+        margin-top: 1.5rem; color: var(--muted); font-size: 0.8rem;
+      }
+      .foot a { color: var(--accent); text-decoration: none; }
+      .foot a:hover { text-decoration: underline; }
+      .foot__byline { flex-basis: 100%; margin-top: 0.35rem; color: var(--muted); }
+      .foot__byline a { color: var(--muted); text-decoration: none; }
+      .foot__byline a:hover { color: var(--accent); text-decoration: underline; }
+
+      /* OSK-117 mobile-web polish: a single phone breakpoint (~360–430px wide); the
+         desktop layout above is untouched. Mirrors index/status/ops/help. */
+      @media (max-width: 640px) {
+        body { padding: 1.5rem 1rem 2.5rem; }
+        h1 { font-size: 1.3rem; }
+        .panel { padding: 1.1rem; }
+        /* Stack the sign-out button under the heading so neither squashes. */
+        .app__bar { flex-direction: column; align-items: stretch; }
+        .btn--ghost { width: 100%; }
+        /* Single-column profile list is easier to read on a narrow screen. */
+        .profile__fields { grid-template-columns: 1fr; gap: 0.15rem 0; }
+        .profile__fields dt { margin-top: 0.6rem; }
+        .foot a { display: inline-block; padding: 0.25rem 0; }
+      }
+
+      /* ================================================================== *
+       * OSK-151 — site-wide, config-driven, dismissible alert banner.
+       * Identical block across index/status/ops/help/app. See index.html for
+       * the full rationale. Every colour is a shared palette token so it re-skins
+       * for the sketch theme automatically.
+       * ================================================================== */
+      .alert-banner {
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        z-index: 1000;
+        display: flex;
+        align-items: flex-start;
+        gap: 0.7rem;
+        padding: 0.75rem 1.15rem;
+        background: var(--panel, #161b22);
+        color: var(--fg);
+        border-bottom: 1px solid var(--border);
+        border-top: 4px solid var(--accent);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        font-size: 0.9rem;
+        line-height: 1.45;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+      }
+      .alert-banner[hidden] { display: none; }
+      .alert-banner--info     { border-top-color: var(--accent); }
+      .alert-banner--warning  { border-top-color: var(--warn, #d29922); }
+      .alert-banner--critical { border-top-color: var(--down, #f85149); }
+      .alert-banner__dot {
+        width: 10px; height: 10px; border-radius: 50%;
+        flex: 0 0 auto; margin-top: 0.35rem; background: var(--accent);
+      }
+      .alert-banner--info     .alert-banner__dot { background: var(--accent); }
+      .alert-banner--warning  .alert-banner__dot { background: var(--warn, #d29922); }
+      .alert-banner--critical .alert-banner__dot { background: var(--down, #f85149); }
+      .alert-banner__msg {
+        flex: 1 1 auto; min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .alert-banner__close {
+        flex: 0 0 auto;
+        font: inherit;
+        font-size: 1.25rem;
+        line-height: 1;
+        color: var(--muted);
+        background: transparent;
+        border: 0;
+        border-radius: 6px;
+        padding: 0.15rem 0.45rem;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      .alert-banner__close:hover { color: var(--fg); }
+      .alert-banner__close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      @media (max-width: 640px) {
+        .alert-banner { padding: 0.7rem 0.9rem; font-size: 0.875rem; }
+        .alert-banner__close { font-size: 1.4rem; padding: 0.1rem 0.5rem; }
+      }
+
+      /* ================================================================== *
+       * OSK-127 — selectable "sketch / blueprint" theme + its toggle.
+       * The default-theme rules above are untouched; everything theme-specific is
+       * scoped under [data-theme="sketch"]. This block matches the siblings; it
+       * additionally sketch-ifies THIS page's inputs/buttons/profile so the paper
+       * theme is consistent here too.
+       * ================================================================== */
+      .theme-switch { margin-top: 1rem; }
+      .theme-toggle {
+        font: inherit;
+        font-size: 0.78rem;
+        line-height: 1.2;
+        color: var(--muted);
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.3rem 0.75rem;
+        margin-left: auto;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      .theme-toggle:hover { color: var(--fg); border-color: var(--muted); }
+      .theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      [data-theme="sketch"] {
+        --bg: #eef1e6;
+        --fg: #16283b;
+        --muted: #5b6b78;
+        --accent: #1f5aa8;
+        --border: #34465a;
+        --panel: rgba(255, 255, 255, 0.55);
+        --ok: #2f8f3e;
+        --warn: #b3781a;
+        --down: #cf3b32;
+      }
+      [data-theme="sketch"] body {
+        background-color: var(--bg);
+        background-image:
+          repeating-linear-gradient(0deg,  rgba(47, 74, 110, 0.07) 0 1px, transparent 1px 24px),
+          repeating-linear-gradient(90deg, rgba(47, 74, 110, 0.07) 0 1px, transparent 1px 24px),
+          repeating-linear-gradient(0deg,  rgba(47, 74, 110, 0.16) 0 1px, transparent 1px 120px),
+          repeating-linear-gradient(90deg, rgba(47, 74, 110, 0.16) 0 1px, transparent 1px 120px);
+        background-attachment: fixed;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+      [data-theme="sketch"] h1,
+      [data-theme="sketch"] h2,
+      [data-theme="sketch"] h3 { letter-spacing: 0; }
+      [data-theme="sketch"] .card,
+      [data-theme="sketch"] .panel {
+        background: var(--panel);
+        border: 1.5px solid var(--border);
+        border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+        box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .panel:nth-of-type(even) {
+        border-radius: 15px 255px 15px 225px / 225px 15px 255px 15px;
+      }
+      [data-theme="sketch"] .logo {
+        background: rgba(31, 90, 168, 0.10);
+        color: var(--accent);
+        border: 1.5px solid var(--accent);
+        border-radius: 14px 225px 18px 255px / 255px 16px 225px 15px;
+        box-shadow: 2px 3px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .theme-toggle {
+        border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+        box-shadow: 1px 2px 0 rgba(22, 40, 59, 0.13);
+      }
+      /* OSK-74 sketch touches: paper-ify the inputs + buttons so the auth panels
+         match the hand-drawn surfaces. Wobbly ink outlines + light paper fill. */
+      [data-theme="sketch"] .field__input {
+        background: rgba(255, 255, 255, 0.6);
+        border-color: var(--border);
+        border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+      }
+      [data-theme="sketch"] .btn {
+        border-color: var(--border);
+        border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+        box-shadow: 1px 2px 0 rgba(22, 40, 59, 0.13);
+      }
+      [data-theme="sketch"] .btn--primary { color: #fff; }
+    </style>
+  </head>
+  <body>
+    <!--
+      OSK-151: site-wide alert banner mount. Rendered hidden by default; the banner
+      script at the foot reveals it only when an alert is configured, in-window, and not
+      dismissed. Identical across the pages.
+    -->
+    <aside id="site-alert" class="alert-banner" role="alert" aria-live="assertive" hidden>
+      <span class="alert-banner__dot" aria-hidden="true"></span>
+      <span class="alert-banner__msg" id="site-alert-msg"></span>
+      <button type="button" class="alert-banner__close" id="site-alert-close" aria-label="Dismiss this alert">&times;</button>
+    </aside>
+
+    <main class="wrap">
+      <header class="head">
+        <div class="logo" aria-hidden="true">OS</div>
+        <div>
+          <h1>OpenSkeleton Account</h1>
+          <p class="sub">Your signed-in area — protected by Firebase Authentication.</p>
+        </div>
+      </header>
+
+      <!--
+        NOTICE region (AC: graceful "auth not configured"). Shown by the guard for the
+        not-configured / loading / error states with an explanatory line. role=status +
+        aria-live=polite so assistive tech announces state changes. Hidden by default.
+      -->
+      <section id="auth-notice" class="panel notice" role="status" aria-live="polite" hidden>
+        <p id="auth-notice-text" class="notice__text"></p>
+      </section>
+
+      <!--
+        SIGN-IN region — shown by the guard when SIGNED OUT. Email/password form plus a
+        "Sign in with Google" popup button. Hidden by default so signed-in users and the
+        not-configured state never see it.
+      -->
+      <section id="auth-signin" class="panel" aria-labelledby="signin-heading" hidden>
+        <h2 id="signin-heading">Sign in</h2>
+        <p class="panel__hint">Sign in to access your account.</p>
+
+        <form id="signin-form" novalidate>
+          <label class="field">
+            <span class="field__label">Email</span>
+            <input id="signin-email" class="field__input" type="email"
+                   autocomplete="email" inputmode="email" required
+                   placeholder="you@example.com" />
+          </label>
+          <label class="field">
+            <span class="field__label">Password</span>
+            <input id="signin-password" class="field__input" type="password"
+                   autocomplete="current-password" required placeholder="••••••••" />
+          </label>
+          <button id="signin-submit" class="btn btn--primary" type="submit">Sign in</button>
+        </form>
+
+        <div class="divider" aria-hidden="true">or</div>
+
+        <button id="google-btn" class="btn btn--google" type="button">
+          <!-- Inline Google "G" glyph (self-contained, no external image). -->
+          <svg class="btn--google__icon" viewBox="0 0 18 18" aria-hidden="true">
+            <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+            <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
+            <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/>
+            <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+          </svg>
+          Sign in with Google
+        </button>
+
+        <p id="signin-error" class="form-error" role="alert" hidden></p>
+      </section>
+
+      <!--
+        PROTECTED region — shown by the guard ONLY when SIGNED IN. Proves the full path:
+        it reads a fresh Firebase ID token and calls GET /api/v1/me with an
+        `Authorization: Bearer` header, then renders the returned profile. Sign-out lives
+        here. Hidden by default.
+      -->
+      <section id="auth-app" class="panel" aria-labelledby="app-heading" hidden>
+        <div class="app__bar">
+          <h2 id="app-heading">Your account</h2>
+          <button id="signout-btn" class="btn btn--ghost" type="button">Sign out</button>
+        </div>
+        <p class="panel__hint">
+          Signed in. This calls the backend <code>/api/v1/me</code> with your Firebase ID
+          token to load your profile.
+        </p>
+        <div class="profile" role="status" aria-live="polite">
+          <p id="profile-status" class="profile__status">Loading your profile…</p>
+          <dl id="profile-fields" class="profile__fields" hidden></dl>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <span class="foot__nav">
+          <a href="/">&larr; OpenSkeleton home</a>
+          &nbsp;&middot;&nbsp;
+          <a href="/help">Help</a>
+        </span>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Theme: Default</button>
+        <span class="foot__byline">A product of <a href="https://openskeleton.dev" target="_blank" rel="noopener">OpenSkeleton</a></span>
+      </footer>
+    </main>
+
+    <script>
+      // OSK-74 — protected-route GUARD wiring. Vanilla, dependency-free. It drives the
+      // three body regions from window.OSKAuth (web/auth.js) and, when signed in, calls
+      // GET /api/v1/me with the Firebase ID token to prove end-to-end wiring.
+      //
+      // The DECISION logic lives in the pure OSKAuth.computeGuardView / applyGuardView
+      // helpers (the same functions a Node simulation asserts — see
+      // web/e2e/auth-guard.simulation.cjs); this script only wires events + the /me
+      // fetch. XSS-safe: only textContent / createElement are ever used.
+      (function () {
+        "use strict";
+
+        var cfg = window.__APP_CONFIG__ || {};
+        var A = window.OSKAuth;
+
+        // The regions the guard shows/hides. Passed straight to applyGuardView.
+        var els = {
+          signIn: document.getElementById("auth-signin"),
+          app: document.getElementById("auth-app"),
+          notice: document.getElementById("auth-notice"),
+          noticeText: document.getElementById("auth-notice-text"),
+        };
+
+        // Hard fallback: if auth.js somehow failed to load, the module global is absent.
+        // Show a plain notice instead of a silently broken page.
+        if (!A) {
+          if (els.notice) { els.notice.hidden = false; }
+          if (els.noticeText) {
+            els.noticeText.textContent =
+              "The sign-in module failed to load. Please refresh the page.";
+          }
+          return;
+        }
+
+        var errorEl = document.getElementById("signin-error");
+        var form = document.getElementById("signin-form");
+        var emailEl = document.getElementById("signin-email");
+        var passwordEl = document.getElementById("signin-password");
+        var submitBtn = document.getElementById("signin-submit");
+        var googleBtn = document.getElementById("google-btn");
+        var signoutBtn = document.getElementById("signout-btn");
+        var profileStatus = document.getElementById("profile-status");
+        var profileFields = document.getElementById("profile-fields");
+
+        // --- Small helpers ----------------------------------------------------
+
+        function showError(message) {
+          if (!errorEl) { return; }
+          errorEl.textContent = message || "";
+          errorEl.hidden = !message;
+        }
+        function clearError() { showError(""); }
+
+        // Enable/disable the sign-in buttons while a request is in flight, so a user
+        // can't fire two popups / double-submit.
+        function setBusy(busy) {
+          if (submitBtn) { submitBtn.disabled = busy; }
+          if (googleBtn) { googleBtn.disabled = busy; }
+        }
+
+        // Remove every child of a node without innerHTML (keeps us strictly XSS-safe).
+        function clearChildren(node) {
+          while (node && node.firstChild) { node.removeChild(node.firstChild); }
+        }
+
+        // Render one key/value profile row (dt + dd) using textContent only.
+        function appendField(dl, key, value) {
+          var dt = document.createElement("dt");
+          dt.textContent = key;
+          var dd = document.createElement("dd");
+          // Objects/arrays are stringified; primitives shown as-is. Never innerHTML.
+          dd.textContent =
+            value !== null && typeof value === "object"
+              ? JSON.stringify(value)
+              : String(value);
+          dl.appendChild(dt);
+          dl.appendChild(dd);
+        }
+
+        // --- Protected example: GET /api/v1/me with the Bearer token ----------
+
+        function loadProfile() {
+          if (!profileStatus || !profileFields) { return; }
+          clearChildren(profileFields);
+          profileFields.hidden = true;
+          profileStatus.hidden = false;
+          profileStatus.textContent = "Loading your profile…";
+
+          A.getIdToken()
+            .then(function (token) {
+              if (!token) {
+                profileStatus.textContent = "No active session.";
+                return null;
+              }
+              // Backend base URL from config.js; trailing slash trimmed so we never
+              // build "//api". "" (same-origin) until the backend is wired.
+              var base = (cfg.apiBaseUrl || "").replace(/\/+$/, "");
+              return fetch(base + "/api/v1/me", {
+                headers: {
+                  Authorization: "Bearer " + token,
+                  Accept: "application/json",
+                },
+                cache: "no-store",
+              }).then(function (r) {
+                // 401 handled gracefully (AC): token rejected/expired — tell the user
+                // and stop, rather than showing a broken profile.
+                if (r.status === 401) {
+                  profileStatus.textContent =
+                    "Your session isn't authorized (401). Try signing out and back in.";
+                  return null;
+                }
+                if (!r.ok) {
+                  profileStatus.textContent =
+                    "Couldn't load your profile (HTTP " + r.status + ").";
+                  return null;
+                }
+                return r.json();
+              });
+            })
+            .then(function (profile) {
+              if (!profile || typeof profile !== "object") { return; }
+              // Render every field of the returned profile as a key/value row.
+              var keys = Object.keys(profile);
+              if (keys.length === 0) {
+                profileStatus.textContent = "Signed in — your profile is empty.";
+                return;
+              }
+              for (var i = 0; i < keys.length; i++) {
+                appendField(profileFields, keys[i], profile[keys[i]]);
+              }
+              profileStatus.hidden = true;
+              profileFields.hidden = false;
+            })
+            .catch(function () {
+              // Network/CORS/backend-down: degrade to a clear line, never throw.
+              profileStatus.textContent =
+                "Couldn't reach the backend to load your profile.";
+            });
+        }
+
+        // --- Render loop ------------------------------------------------------
+
+        // Recompute the view from the current auth state and apply it. When we land in
+        // the signed-in state, kick off the /api/v1/me fetch.
+        var wasSignedIn = false;
+        function render() {
+          var view = A.computeGuardView(A.getState());
+          A.applyGuardView(view, els);
+          if (view.mode === "signed-in") {
+            // Only (re)load the profile on the transition INTO signed-in, not on every
+            // repaint, to avoid redundant /me calls.
+            if (!wasSignedIn) { loadProfile(); }
+            wasSignedIn = true;
+          } else {
+            wasSignedIn = false;
+          }
+        }
+
+        // Paint immediately (loading/not-configured), then on every auth-state change,
+        // and once auth has settled (covers the not-configured/error states that never
+        // emit an auth event).
+        render();
+        A.onAuthStateChanged(render);
+        A.ready.then(render).catch(render);
+
+        // --- Events -----------------------------------------------------------
+
+        if (form) {
+          form.addEventListener("submit", function (ev) {
+            ev.preventDefault();
+            clearError();
+            var email = emailEl ? emailEl.value.trim() : "";
+            var password = passwordEl ? passwordEl.value : "";
+            if (!email || !password) {
+              showError("Enter your email and password.");
+              return;
+            }
+            setBusy(true);
+            A.signInWithEmailPassword(email, password)
+              .then(function () { clearError(); /* render() runs via auth-state change */ })
+              .catch(function (err) {
+                showError((err && err.message) ? err.message : "Sign-in failed.");
+              })
+              .then(function () { setBusy(false); });
+          });
+        }
+
+        if (googleBtn) {
+          googleBtn.addEventListener("click", function () {
+            clearError();
+            setBusy(true);
+            A.signInWithGoogle()
+              .then(function () { clearError(); })
+              .catch(function (err) {
+                showError((err && err.message) ? err.message : "Google sign-in failed.");
+              })
+              .then(function () { setBusy(false); });
+          });
+        }
+
+        if (signoutBtn) {
+          signoutBtn.addEventListener("click", function () {
+            A.signOut().catch(function () { /* nothing useful to show on sign-out error */ });
+          });
+        }
+      })();
+    </script>
+
+    <script>
+      // OSK-127: theme toggle + persistence. Identical to the other pages; kept separate
+      // from the guard logic above. The persisted theme is already applied pre-paint by
+      // the <head> script; here we wire the button and keep localStorage in sync.
+      (function () {
+        "use strict";
+        var KEY = "osk-theme";
+        var root = document.documentElement;
+        var btn = document.getElementById("theme-toggle");
+        if (!btn) { return; }
+
+        function isSketch() { return root.getAttribute("data-theme") === "sketch"; }
+
+        function sync() {
+          btn.textContent = isSketch() ? "Theme: Sketch" : "Theme: Default";
+          btn.setAttribute("aria-pressed", isSketch() ? "true" : "false");
+        }
+
+        function apply(theme) {
+          if (theme === "sketch") {
+            root.setAttribute("data-theme", "sketch");
+          } else {
+            root.removeAttribute("data-theme");
+          }
+          try {
+            localStorage.setItem(KEY, theme);
+          } catch (e) {
+            /* persistence unavailable — theme still applies for this session */
+          }
+          sync();
+        }
+
+        btn.addEventListener("click", function () {
+          apply(isSketch() ? "default" : "sketch");
+        });
+
+        sync();
+      })();
+    </script>
+
+    <script>
+      // OSK-151 — site-wide alert banner. Identical block across index/status/ops/help/app.
+      // Reads window.__APP_CONFIG__.alert and, when active + in-window + not dismissed,
+      // reveals the fixed banner at the top. XSS-safe: message via textContent only.
+      (function () {
+        "use strict";
+
+        var cfg = (window.__APP_CONFIG__ || {}).alert || {};
+        var banner = document.getElementById("site-alert");
+        var msgEl = document.getElementById("site-alert-msg");
+        var closeBtn = document.getElementById("site-alert-close");
+        if (!banner || !msgEl || !closeBtn) { return; }
+
+        var SEVERITIES = { info: true, warning: true, critical: true };
+        var STORAGE_PREFIX = "osk-alert-dismissed:";
+
+        function toTime(v) {
+          if (v == null) { return null; }
+          var t = Date.parse(v);
+          return isNaN(t) ? null : t;
+        }
+
+        function inWindow(now, startsAt, endsAt) {
+          var s = toTime(startsAt);
+          var e = toTime(endsAt);
+          if (s !== null && now < s) { return false; }
+          if (e !== null && now > e) { return false; }
+          return true;
+        }
+
+        function hashMessage(str) {
+          var h = 5381;
+          for (var i = 0; i < str.length; i++) {
+            h = ((h << 5) + h) ^ str.charCodeAt(i);
+          }
+          return (h >>> 0).toString(36);
+        }
+        function storageKey(message) { return STORAGE_PREFIX + hashMessage(message); }
+
+        function isDismissed(message) {
+          try { return localStorage.getItem(storageKey(message)) === "1"; }
+          catch (e) { return false; }
+        }
+        function markDismissed(message) {
+          try { localStorage.setItem(storageKey(message), "1"); }
+          catch (e) { /* storage blocked — dismissal only lasts this session */ }
+        }
+
+        function reserveSpace() {
+          var body = document.body;
+          body.style.paddingTop = "";
+          var base = parseFloat(getComputedStyle(body).paddingTop) || 0;
+          body.style.paddingTop = (base + banner.offsetHeight) + "px";
+        }
+        function releaseSpace() { document.body.style.paddingTop = ""; }
+
+        var message = typeof cfg.message === "string" ? cfg.message.trim() : "";
+        var severity = SEVERITIES[cfg.severity] ? cfg.severity : "info";
+
+        if (cfg.active !== true) { return; }
+        if (!message) { return; }
+        if (!inWindow(Date.now(), cfg.startsAt, cfg.endsAt)) { return; }
+        if (isDismissed(message)) { return; }
+
+        banner.classList.add("alert-banner--" + severity);
+        msgEl.textContent = message;
+        banner.hidden = false;
+
+        reserveSpace();
+        var onResize = function () { if (!banner.hidden) { reserveSpace(); } };
+        window.addEventListener("resize", onResize);
+
+        closeBtn.addEventListener("click", function () {
+          markDismissed(message);
+          banner.hidden = true;
+          releaseSpace();
+          window.removeEventListener("resize", onResize);
+        });
+      })();
+    </script>
+  </body>
+</html>
