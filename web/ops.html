@@ -178,6 +178,13 @@
       }
       .foot a { color: var(--accent); text-decoration: none; }
       .foot a:hover { text-decoration: underline; }
+      /* OSK-141: "A product of …" byline. Subtle secondary-text; flex-basis:100%
+         drops it onto its own row inside the footer so it never disturbs the
+         existing home-link / refresh-note / theme-toggle row. Muted link colour
+         keeps it quiet; hover lifts to the accent. */
+      .foot__byline { flex-basis: 100%; margin-top: 0.35rem; color: var(--muted); }
+      .foot__byline a { color: var(--muted); text-decoration: none; }
+      .foot__byline a:hover { color: var(--accent); text-decoration: underline; }
 
       /* OSK-117: mobile-web polish. A single phone breakpoint (~360–430px wide);
          the desktop layout above is untouched. Mirrors index.html / status.html. */
@@ -426,11 +433,19 @@
       </section>
 
       <footer class="foot">
-        <a href="/">&larr; OpenSkeleton home</a>
+        <!-- OSK-144: Help link sits next to the home link in the footer nav. -->
+        <span class="foot__nav">
+          <a href="/">&larr; OpenSkeleton home</a>
+          &nbsp;&middot;&nbsp;
+          <a href="/help">Help</a>
+        </span>
         <span id="refresh-note">Backend health auto-refreshes every 30s from /health.</span>
         <!-- OSK-127: theme toggle. Switches Default (dark) <-> Sketch
              (graph-paper) and persists the choice in localStorage. -->
         <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">Theme: Default</button>
+        <!-- OSK-141: subtle "A product of …" byline. target=_blank + rel=noopener
+             per the ticket; the org URL is a placeholder for now. -->
+        <span class="foot__byline">A product of <a href="https://openskeleton.dev" target="_blank" rel="noopener">OpenSkeleton</a></span>
       </footer>
     </main>
 
