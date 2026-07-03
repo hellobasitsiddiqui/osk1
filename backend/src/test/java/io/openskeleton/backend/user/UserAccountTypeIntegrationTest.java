@@ -63,7 +63,7 @@ class UserAccountTypeIntegrationTest {
 
     @Test
     void newlyPersistedUserDefaultsToRealAndSurvivesReload() {
-        var saved = userRepository.saveAndFlush(new User("uid-at-fresh", "fresh@example.com", "Fresh"));
+        var saved = userRepository.saveAndFlush(new User("uid-at-fresh", "fresh@at.example.com", "Fresh"));
         assertThat(saved.getAccountType()).isEqualTo(AccountType.REAL);
 
         // Reload from the DB (not the identity-map instance) to prove REAL was actually
@@ -75,7 +75,7 @@ class UserAccountTypeIntegrationTest {
 
     @Test
     void markAccountTypeFlipsToTestAndPersists() {
-        var seeded = userRepository.saveAndFlush(new User("uid-at-mark", "mark@example.com", "Mark"));
+        var seeded = userRepository.saveAndFlush(new User("uid-at-mark", "mark@at.example.com", "Mark"));
         assertThat(seeded.getAccountType()).isEqualTo(AccountType.REAL);
 
         var marked = userService.markAccountType("uid-at-mark", AccountType.TEST);

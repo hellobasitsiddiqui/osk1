@@ -73,6 +73,22 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void dataIntegrityViolationIsMappedTo409WithoutLeakingConstraintDetail() throws Exception {
+        // OSK-163: a unique-constraint clash the app could not reconcile (e.g. a second
+        // account for an already-taken email/phone) surfaces as DataIntegrityViolationException
+        // and must become a 409 problem+json — not a leaked 500 — with a generic detail that
+        // does not echo the constraint name/SQL (which can carry attacker-controlled input).
+        mvc.perform(get("/test/data-integrity"))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.title").value("Conflict"))
+                .andExpect(content()
+                        .string(org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString("ux_users_email_lower_active"))));
+    }
+
+    @Test
     void validationIsMappedTo400WithErrors() throws Exception {
         mvc.perform(post("/test/validate")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -125,6 +141,14 @@ class GlobalExceptionHandlerTest {
         @org.springframework.web.bind.annotation.GetMapping("/test/optimistic-jpa")
         String optimisticJpa() {
             throw new OptimisticLockException("stale entity");
+        }
+
+        @org.springframework.web.bind.annotation.GetMapping("/test/data-integrity")
+        String dataIntegrity() {
+            // The constraint name in the message stands in for the real DB detail that must
+            // NOT reach the client — the handler replaces it with a generic message.
+            throw new org.springframework.dao.DataIntegrityViolationException(
+                    "duplicate key value violates unique constraint \"ux_users_email_lower_active\"");
         }
 
         @PostMapping("/test/validate")

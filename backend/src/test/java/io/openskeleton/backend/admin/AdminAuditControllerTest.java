@@ -91,13 +91,13 @@ class AdminAuditControllerTest {
         userRepository.deleteAll();
 
         when(tokenVerifier.verify(eq(ADMIN_TOKEN)))
-                .thenReturn(new VerifiedToken(ADMIN_UID, "admin@example.com", Role.ADMIN));
+                .thenReturn(new VerifiedToken(ADMIN_UID, "admin@admin.example.com", Role.ADMIN));
         when(tokenVerifier.verify(eq(USER_TOKEN)))
-                .thenReturn(new VerifiedToken("user-uid", "user@example.com", Role.USER));
+                .thenReturn(new VerifiedToken("user-uid", "user@admin.example.com", Role.USER));
 
         // Seed one target user to administer.
         aliceId = userRepository
-                .save(new User("alice-uid", "alice@example.com", "Alice"))
+                .save(new User("alice-uid", "alice@admin.example.com", "Alice"))
                 .getId();
     }
 
@@ -268,7 +268,7 @@ class AdminAuditControllerTest {
     @Test
     void auditReadFiltersByTargetUserId() throws Exception {
         UUID bobId = userRepository
-                .save(new User("bob-uid", "bob@example.com", "Bob"))
+                .save(new User("bob-uid", "bob@admin.example.com", "Bob"))
                 .getId();
         seedEvent(AuditAction.ROLE_CHANGED, aliceId.toString());
         seedEvent(AuditAction.ACCOUNT_DISABLED, bobId.toString());
@@ -300,7 +300,7 @@ class AdminAuditControllerTest {
     @Test
     void auditReadFiltersByTargetUserIdAndAction() throws Exception {
         UUID bobId = userRepository
-                .save(new User("bob-uid", "bob@example.com", "Bob"))
+                .save(new User("bob-uid", "bob@admin.example.com", "Bob"))
                 .getId();
         seedEvent(AuditAction.ROLE_CHANGED, aliceId.toString());
         seedEvent(AuditAction.ACCOUNT_DISABLED, aliceId.toString());

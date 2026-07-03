@@ -115,25 +115,147 @@ public class UserService {
      * @return the persisted user for this uid (existing or freshly created)
      */
     public User provisionFromToken(String firebaseUid, String email) {
-        // Steady-state fast path: the user was provisioned on an earlier request.
-        Optional<User> existing = userRepository.findByFirebaseUid(firebaseUid);
-        if (existing.isPresent()) {
-            return existing.get();
+        // Identity-preserving overload: callers that only carry an email (the current login
+        // flow — MeController/DeviceController read uid+email from the auth-filter attributes)
+        // reconcile by email alone. The canonical three-argument form does the real work.
+        return provisionFromToken(firebaseUid, email, null);
+    }
+
+    /**
+     * Just-in-time provision the caller, reconciling by <b>canonical identity</b> so that one
+     * human maps to exactly one account regardless of how they signed in (OSK-163).
+     *
+     * <p>This is the account-identity core of the ticket. The V2 {@code firebase_uid} UNIQUE
+     * key guarantees one row per Firebase <i>credential</i>, but a single person can hold
+     * several uids for the SAME email/phone (an email/password account plus a later Google or
+     * phone sign-in that Firebase issues a distinct uid for). Left alone, each new uid would
+     * mint its own row — a duplicate account. So provisioning resolves in three ordered steps:
+     *
+     * <ol>
+     *   <li><b>By uid (steady state).</b> If a row already exists for this exact uid, return it
+     *       unchanged — the overwhelmingly common path, unchanged from the original OSK-76
+     *       behaviour.</li>
+     *   <li><b>By identity (reconcile).</b> Otherwise look the caller up by their canonical
+     *       identity — email (case-insensitively) first, then phone. If a DIFFERENT uid already
+     *       owns that identity, we have met this human before under another credential: adopt
+     *       the new uid onto that existing row (see the linking policy below) and return it —
+     *       <b>no new row</b>. This is what makes "sign in via email OR phone → same account".</li>
+     *   <li><b>Insert (genuinely new).</b> Only when neither the uid nor the identity is known do
+     *       we insert a fresh row, carrying the entity's least-privilege defaults
+     *       ({@code role = USER}, {@code enabled = true}) plus whatever identity fields the token
+     *       presented ({@code email}, {@code phone}).</li>
+     * </ol>
+     *
+     * <p><b>Linking policy — "the identity owns the account; the newest uid is adopted onto it".</b>
+     * The canonical key is the email/phone, NOT the Firebase uid. When a known identity signs in
+     * under a new uid, we <i>relink</i> — overwrite {@code firebase_uid} on the existing row with
+     * the new uid — rather than create a second row or return a row whose uid mismatches the
+     * caller. Relinking (not merely returning the old row) is deliberate and necessary: every
+     * other part of the system keys off {@code firebase_uid} (the disabled-account gate in the
+     * auth filter, {@link #updateProfile}, {@link #updateLifecycle}, audit actor ids), so the
+     * persisted uid MUST track the credential the caller is actually presenting or those lookups
+     * would 404. The trade-off — the previously stored uid is forgotten — is acceptable: it was
+     * only ever an alias for the same human, and a later sign-in under it simply relinks back,
+     * always resolving to the one row. Relinking touches ONLY {@code firebase_uid}; it never
+     * overwrites the row's stored email/phone/profile, so a user's data is never clobbered by the
+     * act of signing in through a second provider.
+     *
+     * <p><b>Race + genuine conflict.</b> As with the original design this method is deliberately
+     * NOT {@code @Transactional} (see the sibling note below) so each repository call is its own
+     * transaction and a failed insert rolls back in isolation, leaving the follow-up re-read able
+     * to see a concurrently-committed row. Both the insert AND the relink use {@code saveAndFlush}
+     * so any unique-constraint violation surfaces HERE, synchronously. On a violation we recover
+     * by re-reading — first by uid, then by identity — and return/relink whatever a concurrent
+     * request committed, so a race resolves to the single winning row (never a duplicate, never a
+     * surfaced 500). If recovery still finds nothing, the violation was a GENUINE conflict we
+     * cannot reconcile, so the {@link DataIntegrityViolationException} propagates and
+     * {@code GlobalExceptionHandler} renders it as an RFC-7807 {@code 409 Conflict} — the correct
+     * signal that the request clashed with existing state.
+     *
+     * <p><b>Why NOT {@code @Transactional}:</b> each repository call runs in its own transaction,
+     * and that isolation is exactly what makes the recovery possible — a losing insert's
+     * transaction rolls back on its own, so the subsequent re-read runs in a fresh, un-poisoned
+     * transaction and can see the row the winner committed. Wrapping the whole method in a single
+     * transaction would instead mark it rollback-only on the first violation, and the re-read
+     * would fail too.
+     *
+     * @param firebaseUid the verified Firebase uid (never {@code null} — a handler is only
+     *     reached for an authenticated caller)
+     * @param email the caller's email from the verified token, or {@code null}
+     * @param phone the caller's verified E.164 phone from the token, or {@code null}
+     * @return the persisted user for this identity (existing, relinked, or freshly created)
+     */
+    public User provisionFromToken(String firebaseUid, String email, String phone) {
+        // 1) Steady-state fast path: the user was provisioned on an earlier request under
+        //    this same uid.
+        Optional<User> byUid = userRepository.findByFirebaseUid(firebaseUid);
+        if (byUid.isPresent()) {
+            return byUid.get();
         }
-        // First sight: try to insert. saveAndFlush forces the INSERT — and thus any
-        // unique-constraint violation — to surface HERE, synchronously, rather than being
-        // deferred to a later commit where this method could no longer catch it.
+        // 2) Reconcile: a DIFFERENT uid may already own this canonical identity (email/phone).
+        //    Resolve to that account and adopt the new uid onto it (linking policy) — never a dup.
+        Optional<User> byIdentity = findByIdentity(email, phone);
+        if (byIdentity.isPresent()) {
+            return relinkUid(byIdentity.get(), firebaseUid);
+        }
+        // 3) Genuinely new identity: insert. saveAndFlush forces the INSERT — and thus any
+        //    unique-constraint violation — to surface HERE, synchronously, rather than being
+        //    deferred to a later commit where this method could no longer catch it.
         try {
             User provisioned = new User(firebaseUid, email, null);
+            provisioned.setPhone(phone); // capture the identity's phone so future phone sign-ins reconcile
             return userRepository.saveAndFlush(provisioned);
         } catch (DataIntegrityViolationException race) {
-            // A concurrent first request won the insert and tripped the firebase_uid
-            // UNIQUE constraint for us. The row now exists and is committed: re-read and
-            // return it so the outcome is "found" (idempotent). If it is somehow STILL
-            // absent, the violation was not the uid race (a different constraint), so we
-            // have nothing to return — rethrow rather than invent a result.
-            return userRepository.findByFirebaseUid(firebaseUid).orElseThrow(() -> race);
+            // A concurrent request won the create and tripped a UNIQUE constraint for us
+            // (firebase_uid, or the OSK-163 email/phone identity index). The winning row is now
+            // committed: recover by re-reading — first by uid, then by identity — and return or
+            // relink it so the outcome is "found" (idempotent, no duplicate). If it is somehow
+            // STILL absent, the violation was a GENUINE, unreconcilable conflict, so we rethrow
+            // (the handler maps it to a 409) rather than invent a result.
+            Optional<User> recoveredByUid = userRepository.findByFirebaseUid(firebaseUid);
+            if (recoveredByUid.isPresent()) {
+                return recoveredByUid.get();
+            }
+            User recoveredByIdentity = findByIdentity(email, phone).orElseThrow(() -> race);
+            return relinkUid(recoveredByIdentity, firebaseUid);
         }
+    }
+
+    /**
+     * Resolve an existing <b>active</b> account by canonical identity (OSK-163): email first
+     * (case-insensitively), then phone. Email takes precedence because it is the identity the
+     * login flow always threads through provisioning; phone is the fallback for phone-only
+     * sign-ins. A {@code null}/blank field is skipped (it identifies no one), and when neither
+     * field is present the result is empty — an anonymous, identity-less caller reconciles to
+     * nobody and is treated as genuinely new.
+     */
+    private Optional<User> findByIdentity(String email, String phone) {
+        if (email != null && !email.isBlank()) {
+            Optional<User> byEmail = userRepository.findByEmailIgnoreCase(email);
+            if (byEmail.isPresent()) {
+                return byEmail;
+            }
+        }
+        if (phone != null && !phone.isBlank()) {
+            return userRepository.findByPhone(phone);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Apply the linking policy: adopt {@code firebaseUid} onto {@code existing} (the account that
+     * already owns the caller's identity) and persist, so the canonical row now tracks the
+     * credential the caller is actually presenting. Only {@code firebase_uid} is touched — the
+     * stored email/phone/profile are left intact. {@code saveAndFlush} surfaces any constraint
+     * violation synchronously so the caller's race-recovery can handle it. A no-op when the uid
+     * already matches (defensive; the callers only relink on a genuine mismatch).
+     */
+    private User relinkUid(User existing, String firebaseUid) {
+        if (firebaseUid.equals(existing.getFirebaseUid())) {
+            return existing;
+        }
+        existing.setFirebaseUid(firebaseUid);
+        return userRepository.saveAndFlush(existing);
     }
 
     /**

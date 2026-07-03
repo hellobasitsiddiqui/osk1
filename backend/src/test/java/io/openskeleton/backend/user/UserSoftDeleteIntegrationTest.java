@@ -67,7 +67,7 @@ class UserSoftDeleteIntegrationTest {
 
     @Test
     void newUserStartsActiveWithVersionZero() {
-        var saved = userRepository.saveAndFlush(new User("uid-sd-fresh", "fresh@example.com", "Fresh"));
+        var saved = userRepository.saveAndFlush(new User("uid-sd-fresh", "fresh@sd.example.com", "Fresh"));
 
         // Not deleted, and the @Version counter starts at 0 for a freshly inserted row.
         assertThat(saved.isDeleted()).isFalse();
@@ -77,7 +77,7 @@ class UserSoftDeleteIntegrationTest {
 
     @Test
     void softDeleteHidesFromDefaultReadsThenRestoreShowsAgain() {
-        var seeded = userRepository.saveAndFlush(new User("uid-sd-cycle", "cycle@example.com", "Cycle"));
+        var seeded = userRepository.saveAndFlush(new User("uid-sd-cycle", "cycle@sd.example.com", "Cycle"));
         UUID id = seeded.getId();
         long versionWhenActive = seeded.getVersion();
 
@@ -121,7 +121,7 @@ class UserSoftDeleteIntegrationTest {
 
         // A second soft-delete cannot see the (now hidden) row either, so it also 404s
         // rather than silently succeeding.
-        var seeded = userRepository.saveAndFlush(new User("uid-sd-twice", "twice@example.com", "Twice"));
+        var seeded = userRepository.saveAndFlush(new User("uid-sd-twice", "twice@sd.example.com", "Twice"));
         userService.softDelete(seeded.getId());
         assertThatThrownBy(() -> userService.softDelete(seeded.getId())).isInstanceOf(NotFoundException.class);
     }
@@ -133,7 +133,7 @@ class UserSoftDeleteIntegrationTest {
 
     @Test
     void findActiveByFirebaseUidReflectsSoftDeleteState() {
-        var seeded = userRepository.saveAndFlush(new User("uid-sd-active", "active@example.com", "Active"));
+        var seeded = userRepository.saveAndFlush(new User("uid-sd-active", "active@sd.example.com", "Active"));
         assertThat(userService.findActiveByFirebaseUid("uid-sd-active")).isPresent();
 
         userService.softDelete(seeded.getId());
@@ -142,7 +142,7 @@ class UserSoftDeleteIntegrationTest {
 
     @Test
     void concurrentStaleUpdateIsRejectedWithOptimisticLockFailure() {
-        var seeded = userRepository.saveAndFlush(new User("uid-concurrent", "conc@example.com", "Concurrent"));
+        var seeded = userRepository.saveAndFlush(new User("uid-concurrent", "conc@sd.example.com", "Concurrent"));
         UUID id = seeded.getId();
 
         // Two independent copies loaded at the same version — two racing requests.

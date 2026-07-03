@@ -59,7 +59,7 @@ class UserRepositoryIntegrationTest {
 
     @Test
     void savesUserAndFindsByFirebaseUid() {
-        var user = new User("firebase-uid-alice", "alice@example.com", "Alice");
+        var user = new User("firebase-uid-alice", "alice@repo.example.com", "Alice");
 
         var saved = userRepository.save(user);
 
@@ -77,7 +77,7 @@ class UserRepositoryIntegrationTest {
         var found = userRepository.findByFirebaseUid("firebase-uid-alice").orElseThrow();
         assertThat(found.getId()).isEqualTo(saved.getId());
         assertThat(found.getFirebaseUid()).isEqualTo("firebase-uid-alice");
-        assertThat(found.getEmail()).isEqualTo("alice@example.com");
+        assertThat(found.getEmail()).isEqualTo("alice@repo.example.com");
         assertThat(found.getDisplayName()).isEqualTo("Alice");
         assertThat(found.getRole()).isEqualTo(Role.USER);
         assertThat(found.isEnabled()).isTrue();
@@ -92,18 +92,18 @@ class UserRepositoryIntegrationTest {
 
     @Test
     void updateMutatesFieldsAndBumpsUpdatedAt() {
-        var saved = userRepository.saveAndFlush(new User("firebase-uid-bob", "bob@example.com", "Bob"));
+        var saved = userRepository.saveAndFlush(new User("firebase-uid-bob", "bob@repo.example.com", "Bob"));
         Instant createdAt = saved.getCreatedAt();
 
         // Mutate every settable field via its setter, then persist the update.
-        saved.setEmail("bob2@example.com");
+        saved.setEmail("bob2@repo.example.com");
         saved.setDisplayName("Bob Two");
         saved.setRole(Role.ADMIN);
         saved.setEnabled(false);
         var updated = userRepository.saveAndFlush(saved);
 
         var found = userRepository.findByFirebaseUid("firebase-uid-bob").orElseThrow();
-        assertThat(found.getEmail()).isEqualTo("bob2@example.com");
+        assertThat(found.getEmail()).isEqualTo("bob2@repo.example.com");
         assertThat(found.getDisplayName()).isEqualTo("Bob Two");
         assertThat(found.getRole()).isEqualTo(Role.ADMIN);
         assertThat(found.isEnabled()).isFalse();
@@ -127,7 +127,7 @@ class UserRepositoryIntegrationTest {
         var now = Instant.now();
         user.setId(id);
         user.setFirebaseUid("uid-x");
-        user.setEmail("x@example.com");
+        user.setEmail("x@repo.example.com");
         user.setDisplayName("X");
         user.setRole(Role.ADMIN);
         user.setEnabled(false);
@@ -136,7 +136,7 @@ class UserRepositoryIntegrationTest {
 
         assertThat(user.getId()).isEqualTo(id);
         assertThat(user.getFirebaseUid()).isEqualTo("uid-x");
-        assertThat(user.getEmail()).isEqualTo("x@example.com");
+        assertThat(user.getEmail()).isEqualTo("x@repo.example.com");
         assertThat(user.getDisplayName()).isEqualTo("X");
         assertThat(user.getRole()).isEqualTo(Role.ADMIN);
         assertThat(user.isEnabled()).isFalse();
