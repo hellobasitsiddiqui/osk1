@@ -45,6 +45,8 @@ import org.hibernate.annotations.SQLRestriction;
  *       up by ({@link UserRepository#findByFirebaseUid(String)}).</li>
  *   <li>{@code role} — persisted as its enum <i>name</i> ({@link EnumType#STRING}) so the
  *       stored value is stable and human-readable, matching the {@code TEXT} column.</li>
+ *   <li>{@code accountType} — REAL vs TEST classification (OSK-168), persisted by name like
+ *       {@code role}; defaults to {@link AccountType#REAL} (see {@code V6}).</li>
  * </ul>
  *
  * <p>Plain Java (explicit constructors/getters/setters) is used rather than Lombok:
@@ -87,6 +89,17 @@ public class User extends BaseEntity {
 
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
+
+    /**
+     * Whether this is a genuine end-user account or a test/synthetic one (OSK-168).
+     * Persisted by name, matching {@code role}. Defaults to {@link AccountType#REAL} so a
+     * freshly provisioned user is a real account unless a caller explicitly marks it
+     * {@link AccountType#TEST} via {@link UserService#markAccountType(String, AccountType)};
+     * no email-based auto-classification happens here.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "account_type", nullable = false)
+    private AccountType accountType = AccountType.REAL;
 
     /** No-arg constructor required by JPA/Hibernate. */
     public User() {}
@@ -149,5 +162,13 @@ public class User extends BaseEntity {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public AccountType getAccountType() {
+        return accountType;
+    }
+
+    public void setAccountType(AccountType accountType) {
+        this.accountType = accountType;
     }
 }

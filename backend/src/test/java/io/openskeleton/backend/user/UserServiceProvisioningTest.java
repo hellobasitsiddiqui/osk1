@@ -66,6 +66,8 @@ class UserServiceProvisioningTest {
         assertThat(inserted.getDisplayName()).isNull();
         assertThat(inserted.getRole()).isEqualTo(Role.USER);
         assertThat(inserted.isEnabled()).isTrue();
+        // OSK-168 AC-4: a freshly provisioned account is REAL by default (no auto-classify).
+        assertThat(inserted.getAccountType()).isEqualTo(AccountType.REAL);
         assertThat(result).isSameAs(inserted);
     }
 
@@ -164,5 +166,30 @@ class UserServiceProvisioningTest {
         assertThatThrownBy(() -> userService.updateProfile("uid-missing", "x")).isInstanceOf(NotFoundException.class);
         verify(userRepository, never()).save(any());
         verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void markAccountTypeUpdatesClassificationAndPersists() {
+        // OSK-168 AC-3/AC-4: the setter seam flips REAL -> TEST and saves the change.
+        User user = new User("uid-mark", "mark@example.com", null);
+        assertThat(user.getAccountType()).isEqualTo(AccountType.REAL); // default before the call
+        when(userRepository.findByFirebaseUid("uid-mark")).thenReturn(Optional.of(user));
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        User result = userService.markAccountType("uid-mark", AccountType.TEST);
+
+        assertThat(result.getAccountType()).isEqualTo(AccountType.TEST);
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void markAccountTypeThrowsNotFoundWhenUserMissing() {
+        // The caller is expected to already exist; a missing/soft-deleted row 404s and never
+        // writes — the setter must not silently create a row.
+        when(userRepository.findByFirebaseUid("uid-absent")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.markAccountType("uid-absent", AccountType.TEST))
+                .isInstanceOf(NotFoundException.class);
+        verify(userRepository, never()).save(any());
     }
 }

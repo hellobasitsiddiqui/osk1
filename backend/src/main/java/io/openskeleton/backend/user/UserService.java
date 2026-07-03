@@ -188,4 +188,36 @@ public class UserService {
                 ProfileChange.metadata(ProfileChange.FIELD_DISPLAY_NAME, previousDisplayName, displayName));
         return saved;
     }
+
+    /**
+     * Mark the active user's {@link AccountType} — the reusable seam for flagging an
+     * account as real vs test/synthetic (OSK-168).
+     *
+     * <p>This is deliberately just the setter: it applies whatever classification the
+     * caller decides and persists it. It does <b>not</b> auto-classify by email or any
+     * other heuristic — that policy belongs to the callers (the future test-email hook /
+     * admin), which invoke this once they've decided. New users are never routed through
+     * here; they default to {@link AccountType#REAL} via the entity field on
+     * {@link #provisionFromToken(String, String)}.
+     *
+     * <p>Runs in a single transaction so the load-mutate-save is atomic and carries the
+     * {@code @Version} optimistic-lock check inherited from {@code BaseEntity}: a concurrent
+     * stale write is rejected (409) rather than silently overwritten. The caller is expected
+     * to already exist, so a missing/soft-deleted row is a genuine {@link NotFoundException}
+     * (404) — the default finder cannot see a soft-deleted row.
+     *
+     * @param firebaseUid the verified uid identifying which user to (re)classify
+     * @param accountType the classification to apply (never {@code null})
+     * @return the updated, persisted user
+     * @throws NotFoundException if no active user exists for the uid
+     */
+    @Transactional
+    public User markAccountType(String firebaseUid, AccountType accountType) {
+        Objects.requireNonNull(accountType, "accountType");
+        User user = userRepository
+                .findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> new NotFoundException("No active user with firebaseUid " + firebaseUid));
+        user.setAccountType(accountType);
+        return userRepository.save(user);
+    }
 }
