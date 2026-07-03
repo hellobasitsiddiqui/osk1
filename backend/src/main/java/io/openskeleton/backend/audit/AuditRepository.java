@@ -37,4 +37,39 @@ public interface AuditRepository extends JpaRepository<AuditEvent, UUID> {
      * @return the requested page of matching events
      */
     Page<AuditEvent> findByActorFirebaseUidAndAction(String actorFirebaseUid, AuditAction action, Pageable pageable);
+
+    /**
+     * Page over every event recorded against one target entity — e.g. all audit rows for a
+     * single user id — backing the admin audit read endpoint's {@code ?targetUserId=} filter
+     * (OSK-93). Ordering is left to the {@link Pageable} (the endpoint defaults it to
+     * {@code createdAt DESC}, newest-first).
+     *
+     * @param targetId the affected entity's id to filter by (a user's UUID rendered as text)
+     * @param pageable page/size/sort (size is capped by {@code PageableConfig})
+     * @return the requested page of events targeting that id
+     */
+    Page<AuditEvent> findByTargetId(String targetId, Pageable pageable);
+
+    /**
+     * Page over every event of a single action across all actors/targets — e.g. all
+     * {@code ROLE_CHANGED} events — backing the admin audit read endpoint's {@code ?action=}
+     * filter (OSK-93). Ordering is left to the {@link Pageable}.
+     *
+     * @param action the single action to filter by
+     * @param pageable page/size/sort (size is capped by {@code PageableConfig})
+     * @return the requested page of events for that action
+     */
+    Page<AuditEvent> findByAction(AuditAction action, Pageable pageable);
+
+    /**
+     * Page over the events of a single action recorded against one target — the combined
+     * {@code ?targetUserId=&action=} filter on the admin audit read endpoint (OSK-93).
+     * Ordering is left to the {@link Pageable}.
+     *
+     * @param targetId the affected entity's id to filter by
+     * @param action the single action to filter by
+     * @param pageable page/size/sort (size is capped by {@code PageableConfig})
+     * @return the requested page of matching events
+     */
+    Page<AuditEvent> findByTargetIdAndAction(String targetId, AuditAction action, Pageable pageable);
 }

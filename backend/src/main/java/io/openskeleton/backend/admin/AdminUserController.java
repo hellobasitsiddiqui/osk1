@@ -1,8 +1,10 @@
 package io.openskeleton.backend.admin;
 
+import io.openskeleton.backend.auth.FirebaseAuthenticationFilter;
 import io.openskeleton.backend.common.PagedResponse;
 import io.openskeleton.backend.user.User;
 import io.openskeleton.backend.user.User.Role;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.time.Instant;
@@ -69,7 +71,7 @@ public class AdminUserController {
      * @param role        the persisted authorization role, rendered as its enum name
      *     ({@code "USER"} / {@code "ADMIN"})
      * @param enabled     whether the account is active ({@code false} = locked out; see
-     *     {@link AdminUserService#setEnabled(UUID, boolean)})
+     *     {@link AdminUserService#setEnabled(UUID, boolean, String)})
      * @param accountType REAL vs TEST classification, rendered as its enum name
      * @param createdAt   when the account was first provisioned
      */
@@ -140,23 +142,35 @@ public class AdminUserController {
     /**
      * {@code PATCH /api/v1/admin/users/{id}/role} — set a user's role and return the updated
      * summary. 400 on a missing/invalid role, 404 on an unknown id.
+     *
+     * <p>The change is recorded to the audit log (OSK-93) with the acting admin as the actor:
+     * the actor uid is read from the verified-token request attribute the auth filter published
+     * ({@link FirebaseAuthenticationFilter#UID_ATTRIBUTE}, the same source {@code MeController}
+     * uses) and threaded into the service — never taken from the request body.
      */
     @PatchMapping("/{id}/role")
     @PreAuthorize("hasRole('ADMIN')")
-    public UserSummary updateRole(@PathVariable UUID id, @Valid @RequestBody UpdateRoleRequest body) {
-        return UserSummary.from(adminUserService.changeRole(id, body.role()));
+    public UserSummary updateRole(
+            HttpServletRequest request, @PathVariable UUID id, @Valid @RequestBody UpdateRoleRequest body) {
+        String actorUid = (String) request.getAttribute(FirebaseAuthenticationFilter.UID_ATTRIBUTE);
+        return UserSummary.from(adminUserService.changeRole(id, body.role(), actorUid));
     }
 
     /**
      * {@code PATCH /api/v1/admin/users/{id}/enabled} — enable/disable a user and return the
      * updated summary. Disabling takes effect immediately: the user's next authenticated
      * request is rejected with a 403 by the auth filter (see
-     * {@link AdminUserService#setEnabled(UUID, boolean)}). 400 on a missing flag, 404 on an
-     * unknown id.
+     * {@link AdminUserService#setEnabled(UUID, boolean, String)}). 400 on a missing flag, 404 on
+     * an unknown id.
+     *
+     * <p>The change is recorded to the audit log (OSK-93) with the acting admin as the actor,
+     * read from the verified-token request attribute (see {@link #updateRole}).
      */
     @PatchMapping("/{id}/enabled")
     @PreAuthorize("hasRole('ADMIN')")
-    public UserSummary updateEnabled(@PathVariable UUID id, @Valid @RequestBody UpdateEnabledRequest body) {
-        return UserSummary.from(adminUserService.setEnabled(id, body.enabled()));
+    public UserSummary updateEnabled(
+            HttpServletRequest request, @PathVariable UUID id, @Valid @RequestBody UpdateEnabledRequest body) {
+        String actorUid = (String) request.getAttribute(FirebaseAuthenticationFilter.UID_ATTRIBUTE);
+        return UserSummary.from(adminUserService.setEnabled(id, body.enabled(), actorUid));
     }
 }

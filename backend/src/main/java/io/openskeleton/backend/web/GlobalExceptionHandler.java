@@ -12,6 +12,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
  * Global API error model — turns every unhandled failure into a consistent
@@ -20,7 +21,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * stack trace is never leaked to the caller.
  *
  * <p>Mappings implemented here: bean-validation → 400, unreadable/invalid body
- * ({@link HttpMessageNotReadableException}, e.g. an unknown enum value) → 400,
+ * ({@link HttpMessageNotReadableException}, e.g. an unknown enum value) → 400, an
+ * unbindable request parameter ({@link MethodArgumentTypeMismatchException}, e.g. an
+ * unknown {@code ?action=} enum value on the admin audit endpoint — OSK-93) → 400,
  * {@link NotFoundException} → 404, method-security denial
  * ({@link AccessDeniedException}) → 403, {@link ConflictException} → 409,
  * optimistic-locking failures ({@link ObjectOptimisticLockingFailureException} /
@@ -102,6 +105,23 @@ public class GlobalExceptionHandler {
         log.debug("Unreadable request body", ex);
         ProblemDetail pd =
                 ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Malformed or invalid request body.");
+        pd.setTitle("Bad Request");
+        return pd;
+    }
+
+    /**
+     * A request parameter/path variable that cannot be bound to its target type → 400. The
+     * case that matters for OSK-93: an unknown {@code ?action=} value on
+     * {@code GET /api/v1/admin/audit} that does not name an {@link Enum} constant — Spring
+     * raises {@link MethodArgumentTypeMismatchException} during binding, which would otherwise
+     * fall through to the catch-all 500. A malformed filter/param is a client error, so it is a
+     * 400. The message is generic to avoid echoing attacker-controlled input.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ProblemDetail handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        log.debug("Unbindable request parameter '{}'", ex.getName(), ex);
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, "Invalid value for request parameter '" + ex.getName() + "'.");
         pd.setTitle("Bad Request");
         return pd;
     }

@@ -1,9 +1,13 @@
 package io.openskeleton.backend.admin;
 
+import io.openskeleton.backend.audit.AuditAction;
+import io.openskeleton.backend.audit.AuditService;
 import io.openskeleton.backend.user.User;
 import io.openskeleton.backend.user.User.Role;
 import io.openskeleton.backend.user.UserRepository;
 import io.openskeleton.backend.web.NotFoundException;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -33,25 +37,44 @@ import org.springframework.transaction.annotation.Transactional;
  * admin surface (a deleted user reads as "not found"). Reactivating a deleted account is the
  * restore flow's job (OSK-84), not this ticket's.
  *
- * <p><b>Concurrency.</b> {@link #changeRole(UUID, Role)} and
- * {@link #setEnabled(UUID, boolean)} load-mutate-save through Hibernate, so each carries the
+ * <p><b>Concurrency.</b> {@link #changeRole(UUID, Role, String)} and
+ * {@link #setEnabled(UUID, boolean, String)} load-mutate-save through Hibernate, so each carries the
  * {@code @Version} optimistic-lock check inherited from {@code BaseEntity}: a concurrent
  * stale write is rejected with a 409 by the global handler rather than silently overwritten.
  *
- * <p><b>Audit logging is deliberately NOT done here — see OSK-93.</b> The mutating methods
- * are the natural call sites for "who changed whose role / enabled flag", but recording those
- * events into the append-only audit log ({@code AuditService.record(...)} with
- * {@code ROLE_CHANGED} / {@code ACCOUNT_ENABLED} / {@code ACCOUNT_DISABLED}) is a separate
- * ticket. Each mutation below marks the exact seam with a {@code TODO(OSK-93)} so the wiring
- * lands in one obvious place without pre-empting that ticket's scope.
+ * <p><b>Audit logging (OSK-93).</b> The two mutating methods are the natural call sites for
+ * "who changed whose role / enabled flag", so each now appends a single event to the
+ * append-only audit log through {@link AuditService#record} — {@code ROLE_CHANGED} (with
+ * {@code {old, new}} role metadata), {@code ACCOUNT_ENABLED} or {@code ACCOUNT_DISABLED} — at
+ * the exact seam OSK-71 left marked. The actor is the acting admin's Firebase uid (threaded in
+ * from the controller, which reads it off the verified-token request attribute — never a
+ * request body), and the target is the affected user's id. The {@code record(...)} call joins
+ * each method's existing {@link Transactional} boundary, so the mutation and its audit row
+ * commit atomically or roll back together (a rejected optimistic-lock write leaves no orphan
+ * audit event). Reads ({@link #list(Pageable)} / {@link #get(UUID)}) are not security mutations
+ * and are intentionally not audited.
  */
 @Service
 public class AdminUserService {
 
-    private final UserRepository userRepository;
+    /**
+     * Coarse audit {@code target_type} stamped on every admin user-management event: these
+     * actions always target a {@code users} row (the specific id rides in {@code target_id}).
+     * Matches the {@code "USER"} descriptor OSK-80's tests exercise for these actions.
+     */
+    private static final String TARGET_TYPE_USER = "USER";
 
-    public AdminUserService(UserRepository userRepository) {
+    // JSONB metadata keys for a role change, mirroring the {old, new} shape the profile-change
+    // history (OSK-99) already uses, so the stored audit metadata reads consistently.
+    private static final String META_OLD = "old";
+    private static final String META_NEW = "new";
+
+    private final UserRepository userRepository;
+    private final AuditService auditService;
+
+    public AdminUserService(UserRepository userRepository, AuditService auditService) {
         this.userRepository = userRepository;
+        this.auditService = auditService;
     }
 
     /**
@@ -99,20 +122,30 @@ public class AdminUserService {
      * it is intentionally left as a follow-up rather than wired into a credential-free,
      * test-exercised endpoint.
      *
-     * @param id   the target user's id
-     * @param role the new role (never {@code null} — the controller validates the body)
+     * @param id               the target user's id
+     * @param role             the new role (never {@code null} — the controller validates the body)
+     * @param actorFirebaseUid the acting admin's Firebase uid, recorded as the audit actor
+     *     (may be {@code null} only for a system-originated call; normal admin calls always
+     *     carry the verified-token uid)
      * @return the updated, persisted user
      * @throws NotFoundException if no active user has that id (404)
      */
     @Transactional
-    public User changeRole(UUID id, Role role) {
+    public User changeRole(UUID id, Role role, String actorFirebaseUid) {
         Objects.requireNonNull(role, "role");
         User user = userRepository.findById(id).orElseThrow(() -> new NotFoundException("No user with id " + id));
+        Role previousRole = user.getRole();
         user.setRole(role);
         User saved = userRepository.save(user);
-        // TODO(OSK-93): record an audit event here —
-        // auditService.record(actorUid, AuditAction.ROLE_CHANGED, "USER", id.toString(), {old, new}).
-        // Left unwired on purpose: audit logging for admin mutations is that ticket's scope.
+        // Append the role change to the append-only audit log (OSK-93). Runs inside this
+        // @Transactional, so the users update and its audit row commit atomically. The
+        // {old, new} metadata captures what the role changed from and to.
+        auditService.record(
+                actorFirebaseUid,
+                AuditAction.ROLE_CHANGED,
+                TARGET_TYPE_USER,
+                id.toString(),
+                roleChangeMetadata(previousRole, role));
         return saved;
     }
 
@@ -126,19 +159,41 @@ public class AdminUserService {
      * {@code false} here is the mechanism that locks an account out; flipping it back to
      * {@code true} restores access on the user's next request.
      *
-     * @param id      the target user's id
-     * @param enabled the desired enabled state
+     * @param id               the target user's id
+     * @param enabled          the desired enabled state
+     * @param actorFirebaseUid the acting admin's Firebase uid, recorded as the audit actor
+     *     (may be {@code null} only for a system-originated call; normal admin calls always
+     *     carry the verified-token uid)
      * @return the updated, persisted user
      * @throws NotFoundException if no active user has that id (404)
      */
     @Transactional
-    public User setEnabled(UUID id, boolean enabled) {
+    public User setEnabled(UUID id, boolean enabled, String actorFirebaseUid) {
         User user = userRepository.findById(id).orElseThrow(() -> new NotFoundException("No user with id " + id));
         user.setEnabled(enabled);
         User saved = userRepository.save(user);
-        // TODO(OSK-93): record an audit event here —
-        // auditService.record(actorUid, enabled ? AuditAction.ACCOUNT_ENABLED : AuditAction.ACCOUNT_DISABLED,
-        //         "USER", id.toString(), null). Left unwired on purpose (audit logging is OSK-93).
+        // Append the enable/disable to the append-only audit log (OSK-93), inside this
+        // @Transactional so it commits atomically with the users update. The action name
+        // itself (ACCOUNT_ENABLED vs ACCOUNT_DISABLED) carries the whole story, so no extra
+        // metadata is needed.
+        auditService.record(
+                actorFirebaseUid,
+                enabled ? AuditAction.ACCOUNT_ENABLED : AuditAction.ACCOUNT_DISABLED,
+                TARGET_TYPE_USER,
+                id.toString());
         return saved;
+    }
+
+    /**
+     * Build the {@code audit_events.metadata} map for a role change: {@code {old, new}} role
+     * names. A {@link LinkedHashMap} keeps a stable {@code old, new} key order in the stored
+     * JSON. Roles are recorded by their enum {@code name()} (stable and human-readable),
+     * matching how the {@code role} column itself is persisted.
+     */
+    private static Map<String, Object> roleChangeMetadata(Role oldRole, Role newRole) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put(META_OLD, oldRole.name());
+        metadata.put(META_NEW, newRole.name());
+        return metadata;
     }
 }
