@@ -1,6 +1,7 @@
 package io.openskeleton.backend.user;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 import io.openskeleton.backend.user.User.Role;
 import java.time.Instant;
@@ -107,10 +108,13 @@ class UserRepositoryIntegrationTest {
         assertThat(found.getRole()).isEqualTo(Role.ADMIN);
         assertThat(found.isEnabled()).isFalse();
         // @PreUpdate advanced updatedAt but left the immutable createdAt untouched.
-        // Compare at microsecond precision: Postgres timestamptz truncates the in-memory
-        // Instant (nanos on Linux CI, micros on macOS) to microseconds on the round-trip,
-        // so an exact isEqualTo is platform-dependent — truncate the expected to match.
-        assertThat(found.getCreatedAt()).isEqualTo(createdAt.truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+        // Assert within microsecond tolerance: Postgres timestamptz has microsecond
+        // resolution and ROUNDS the in-memory Instant (nanos on Linux CI, micros on macOS)
+        // on the round-trip — it does NOT truncate — so neither an exact isEqualTo nor a
+        // truncatedTo(MICROS) is stable (rounding can cross a micro boundary, which
+        // intermittently red-flaked CI). Comparing within 1µs proves createdAt was
+        // preserved without depending on the rounding direction.
+        assertThat(found.getCreatedAt()).isCloseTo(createdAt, within(1, java.time.temporal.ChronoUnit.MICROS));
         assertThat(updated.getUpdatedAt()).isAfterOrEqualTo(createdAt);
     }
 
