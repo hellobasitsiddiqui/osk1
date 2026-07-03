@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">OpenSkeleton</string>
+    <string name="title_activity_main">OpenSkeleton</string>
+    <string name="package_name">dev.openskeleton.app</string>
+    <string name="custom_url_scheme">dev.openskeleton.app</string>
+</resources>
