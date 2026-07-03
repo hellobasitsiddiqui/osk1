@@ -1,0 +1,25 @@
+-- V9__add_last_active_to_users.sql — record when each user was last active (OSK-73).
+--
+-- Adds a single nullable timestamp, `last_active_at`, to the OSK-60 `users` table. It is
+-- the ONE piece of account state OSK-73 actually persists: every other field the ticket
+-- surfaces on /me (email-verified, MFA, phone-verified, photoURL, last-login) is owned by
+-- Firebase and read live via the Admin SDK, never stored here. This column is the
+-- backend's own "heartbeat": a lightweight interceptor stamps it (throttled) on every
+-- authenticated /api/v1/** request, so the platform knows the last time the caller was
+-- seen — independent of Firebase's `last-login` (which only advances on a fresh sign-in).
+--
+-- Nullability: NULL is meaningful and correct as the default. A freshly JIT-provisioned
+-- user (OSK-76) has never completed a stamped request yet, and every pre-existing row
+-- predates this column, so both legitimately start NULL ("not yet observed active"). The
+-- entity mapping (`User.lastActiveAt`) is therefore a nullable Instant, and /me renders it
+-- as an absent field until the first stamp lands.
+--
+-- Type: TIMESTAMPTZ, matching created_at/updated_at/deleted_at — an absolute instant, not a
+-- wall-clock time. Hibernate runs in `validate` mode (see application.yml), so this column
+-- and the `User.lastActiveAt` mapping MUST agree exactly or the context fails to boot.
+--
+-- No DEFAULT: unlike created_at/updated_at (which default now() as an out-of-band safety
+-- net), last_active_at must stay NULL until a request actually stamps it — a default of
+-- now() would falsely report every never-active row as active at insert time.
+ALTER TABLE users
+    ADD COLUMN last_active_at TIMESTAMPTZ NULL;

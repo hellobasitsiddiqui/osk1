@@ -61,7 +61,18 @@
           "email" : {
             "type" : "string"
           },
+          "emailVerified" : {
+            "type" : "boolean"
+          },
           "firstName" : {
+            "type" : "string"
+          },
+          "lastActiveAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "lastLoginAt" : {
+            "format" : "date-time",
             "type" : "string"
           },
           "lastName" : {
@@ -69,6 +80,9 @@
           },
           "locale" : {
             "type" : "string"
+          },
+          "mfaEnabled" : {
+            "type" : "boolean"
           },
           "notificationPreference" : {
             "enum" : [ "EMAIL", "PUSH", "NONE" ],
@@ -78,6 +92,15 @@
             "type" : "boolean"
           },
           "phone" : {
+            "type" : "string"
+          },
+          "phoneNumber" : {
+            "type" : "string"
+          },
+          "phoneVerified" : {
+            "type" : "boolean"
+          },
+          "photoUrl" : {
             "type" : "string"
           },
           "role" : {
