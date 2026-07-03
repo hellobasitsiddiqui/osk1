@@ -1,6 +1,7 @@
 package io.openskeleton.backend.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -299,9 +300,11 @@ class MeProfileFieldsIntegrationTest {
         assertThat(found.getNotificationPreference()).isEqualTo(NotificationPreference.NONE);
         assertThat(found.getTimezone()).isEqualTo("America/New_York");
         assertThat(found.getLocale()).isEqualTo("en-US");
-        // Timestamp gotcha: Postgres timestamptz stores microseconds, so the in-memory Instant
-        // (nanos on Linux CI) round-trips truncated — compare the expected at MICROS precision.
-        assertThat(found.getCreatedAt()).isEqualTo(createdAt.truncatedTo(ChronoUnit.MICROS));
+        // Timestamp gotcha: Postgres timestamptz has microsecond resolution and ROUNDS the
+        // in-memory Instant (nanos on Linux CI) on the round-trip — not truncates — so assert
+        // within 1µs rather than an exact match (avoids the rounding-boundary flake, see the
+        // matching fix in UserRepositoryIntegrationTest).
+        assertThat(found.getCreatedAt()).isCloseTo(createdAt, within(1, ChronoUnit.MICROS));
     }
 
     @Test
