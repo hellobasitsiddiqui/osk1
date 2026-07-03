@@ -20,6 +20,7 @@ web/e2e/
 ├── static-server.mjs      # zero-dep static server, mirrors firebase.json rewrites
 ├── auth-guard.simulation.cjs   # headless Node sim of the OSK-74 guard (no browser)
 ├── completion-gate.simulation.cjs # headless Node sim of the OSK-136 first-login gate
+├── badges.simulation.cjs       # headless Node sim of the OSK-70 account-state badges
 ├── history.simulation.cjs      # headless Node sim of the OSK-101 profile-history view
 ├── tests/
 │   ├── smoke.spec.ts      # the static-pages smoke walkthrough
@@ -95,6 +96,28 @@ it without needing a live Firebase sign-in (which requires the human apiKey/appI
 
 When OSK-92 supplies the apiKey/appId, a real **cold-login** walkthrough can drop in as a
 new `tests/*.spec.ts` using this same harness — no infra change.
+
+## Account-state badges (OSK-70) — headless simulation
+
+The signed-in `/app` (and `/profile`) view shows a compact **account-state badge row**
+(`web/badges.js` + `web/badges.css`) — email-verified, age-verified and MFA — read from
+`GET /api/v1/me`. It renders only for a signed-in user, so a live run needs the human
+Firebase apiKey (**OSK-92**); the pure state-mapping + render logic is exported for
+headless coverage instead:
+
+- **`badges.simulation.cjs`** — a zero-dependency Node script that `require()`s the pure
+  helpers `badges.js` exports and asserts, with a fake DOM + a **stubbed fetch**: the
+  flag→state mapping (`computeBadges` — email/age booleans → verified/unverified; the MFA
+  **tri-state** where `mfaEnabled === null` → **"unknown", never "off"**, with an optional
+  `mfaUnknownMode: "hide"`); the controller render (one `<li>` per badge with the right
+  icon/label/`data-state`/`aria-label`/`title`); and graceful degradation — **signed-out**
+  (no token), **401**, **500** and **network error** all render **nothing** (mount cleared
+  + hidden). It also machine-checks the **XSS-safe** contract: a poisoned `innerHTML`
+  setter must never fire, and a hostile string in an unrelated `/me` field never reaches
+  the DOM. Run it with `node badges.simulation.cjs` (exits non-zero on any failure).
+
+When OSK-92 supplies the apiKey, a real signed-in walkthrough asserting the visible badges
+can drop in as a new `tests/*.spec.ts` using this same harness — no infra change.
 
 ## Admin users console (OSK-72) — headless simulation
 

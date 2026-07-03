@@ -1,0 +1,115 @@
+/* badges.css — styles for the OpenSkeleton account-state badges (OSK-70).
+ *
+ * Loaded by badges.js (an idempotent <link> injection) so a page only needs the
+ * `#account-badges` mount + the module <script> — no per-page <head> edit. Every colour is
+ * a SHARED PALETTE TOKEN declared by the host page's :root (--ok / --muted / --border /
+ * --panel / --fg / --accent), so the badges re-skin for the sketch theme automatically,
+ * exactly like the OSK-75 verify-email banner and the OSK-151 alert banner. Fallback hex
+ * values match the default dark GitHub-Primer palette for the (unlikely) case a page
+ * hasn't declared the tokens.
+ *
+ * STATE, NOT JUST COLOUR: each badge shows an icon + a full text label, so the meaning
+ * never relies on colour alone (WCAG 1.4.1). The colour is a reinforcement:
+ *   verified   => green  (--ok)      the good/complete state
+ *   unverified => grey   (--muted)   a neutral not-yet nudge, not an alarming error
+ *   unknown    => grey   (--muted)   we genuinely don't know (MFA only, dashed outline)
+ */
+
+.acct-badges {
+  display: flex;
+  flex-wrap: wrap;          /* wrap onto multiple rows on narrow screens instead of overflowing */
+  gap: 0.5rem;
+  align-items: center;
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+
+/* Native `hidden` must win over the flex display (same pattern as the sibling banners). */
+.acct-badges[hidden] { display: none; }
+
+.acct-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.28rem 0.6rem;
+  background: var(--panel, #161b22);
+  color: var(--fg, #e6edf3);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 999px;     /* pill shape reads as a compact status chip */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  white-space: nowrap;      /* keep "Email verified" on one line; the row wraps, not the text */
+}
+
+/* The icon disc. Fixed size so ✓ / ○ / ? all sit in an identical circle regardless of
+ * glyph width, giving the row a tidy, consistent rhythm. */
+.acct-badge__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.acct-badge__label { font-weight: 600; }
+
+/* --- Verified: green accent (the good state) ------------------------------- */
+.acct-badge--verified {
+  border-color: var(--ok, #3fb950);
+}
+.acct-badge--verified .acct-badge__icon {
+  background: var(--ok, #3fb950);
+  color: #fff;
+}
+
+/* --- Unverified: neutral grey (a nudge, deliberately NOT red) --------------- */
+.acct-badge--unverified {
+  color: var(--muted, #8b949e);
+  border-color: var(--border, #30363d);
+}
+.acct-badge--unverified .acct-badge__icon {
+  background: transparent;
+  color: var(--muted, #8b949e);
+  border: 1.5px solid var(--muted, #8b949e);
+}
+
+/* --- Unknown: grey, dashed outline to signal "indeterminate" (MFA only) ----- */
+.acct-badge--unknown {
+  color: var(--muted, #8b949e);
+  border-style: dashed;
+  border-color: var(--muted, #8b949e);
+}
+.acct-badge--unknown .acct-badge__icon {
+  background: transparent;
+  color: var(--muted, #8b949e);
+  border: 1.5px dashed var(--muted, #8b949e);
+}
+
+/* OSK-117 phone breakpoint (~360–430px): mirror the siblings. Slightly tighter chips so a
+ * full row of three still fits comfortably; the flex-wrap above handles the rest. */
+@media (max-width: 640px) {
+  .acct-badges { gap: 0.4rem; }
+  .acct-badge { font-size: 0.8rem; padding: 0.26rem 0.55rem; }
+}
+
+/* ================================================================== *
+ * OSK-127 — sketch / blueprint theme re-skin. Scoped under [data-theme="sketch"]
+ * so the default theme above is untouched. Matches the hand-drawn surfaces the
+ * sibling pages use (wobbly ink outlines, light paper fill). The palette tokens
+ * already flip via :root, so only the shapes need overriding.
+ * ================================================================== */
+[data-theme="sketch"] .acct-badge {
+  border: 1.5px solid var(--border);
+  border-radius: 14px 225px 14px 225px / 225px 14px 225px 14px;
+  box-shadow: 1px 2px 0 rgba(22, 40, 59, 0.13);
+}
+[data-theme="sketch"] .acct-badge--verified { border-color: var(--ok); }
+[data-theme="sketch"] .acct-badge--unknown { border-style: dashed; }

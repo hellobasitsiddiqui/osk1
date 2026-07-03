@@ -505,6 +505,12 @@
           Signed in. This calls the backend <code>/api/v1/me</code> with your Firebase ID
           token to load your profile.
         </p>
+        <!--
+          OSK-70: account-state badges (email-verified / age-verified / MFA). Populated by
+          web/badges.js, which reads GET /api/v1/me and renders a compact status row here.
+          Hidden until badges are rendered (signed-out / error => nothing shows).
+        -->
+        <ul id="account-badges" class="acct-badges" aria-label="Account status" hidden></ul>
         <div class="profile" role="status" aria-live="polite">
           <p id="profile-status" class="profile__status">Loading your profile…</p>
           <dl id="profile-fields" class="profile__fields" hidden></dl>
@@ -881,5 +887,13 @@
       gates (terms → profile-completion → onboarding) — independent + idempotent.
     -->
     <script src="/completion-gate.js"></script>
+    <!--
+      OSK-70: account-state badges. Self-contained like tour.js / terms.js — this ONE include
+      injects its own themed styles (web/badges.css), reads GET /api/v1/me and renders the
+      email-verified / age-verified / MFA status row into the #account-badges mount above.
+      Loaded after auth.js + config.js so window.OSKAuth and the config exist. Signed-out /
+      401 / error => nothing renders. mfaEnabled === null is shown as "unknown", never "off".
+    -->
+    <script src="/badges.js"></script>
   </body>
 </html>
