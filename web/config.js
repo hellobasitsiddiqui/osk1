@@ -63,4 +63,34 @@ window.__APP_CONFIG__ = {
     startsAt: null,
     endsAt: null,
   },
+
+  // OSK-74: Firebase Web App config for the web auth guard (web/auth.js). auth.js
+  // reads this at runtime to initialise the Firebase JS SDK and gate the protected
+  // /app page (sign-in with email/password or Google, then call /api/v1/me).
+  //
+  // INJECTED-LATER pattern (same as apiBaseUrl above): `apiKey` and `appId` are the
+  // per-Web-App identifiers minted when a human registers a Firebase WEB app in the
+  // console (ticket OSK-92; needs firebase-scoped ADC, ticket OSK-38). They are left
+  // EMPTY here on purpose — DO NOT invent placeholder values. auth.js treats an empty
+  // apiKey as "auth not configured": it never crashes, it just renders a clear notice
+  // and keeps the protected content hidden until these are filled in (by the human or
+  // by the deploy pipeline, exactly like apiBaseUrl).
+  //
+  // Note: the Firebase web apiKey is NOT a classic secret — it is a public client
+  // identifier safe to ship in static assets (access is enforced by Firebase Auth +
+  // backend token verification, not by hiding this string). It is still left blank
+  // here only because the value does not exist until the Web App is registered.
+  //
+  // The other three values are the KNOWN, non-secret project identifiers for the
+  // `openskeleton-one` Firebase project, so they are prefilled:
+  //   authDomain        — <projectId>.firebaseapp.com, the auth/OAuth redirect host.
+  //   projectId         — the GCP/Firebase project id.
+  //   messagingSenderId — the project number (public, used by the SDK).
+  firebase: {
+    apiKey: "", // OSK-92: injected by the Firebase Web App registration (human-gated).
+    authDomain: "openskeleton-one.firebaseapp.com",
+    projectId: "openskeleton-one",
+    messagingSenderId: "476227744481",
+    appId: "", // OSK-92: injected by the Firebase Web App registration (human-gated).
+  },
 };

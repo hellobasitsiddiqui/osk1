@@ -18,9 +18,11 @@ web/e2e/
 ├── package-lock.json      # pinned install for reproducible CI (npm ci)
 ├── playwright.config.ts   # headless Chromium; boots the static server; baseURL; projects
 ├── static-server.mjs      # zero-dep static server, mirrors firebase.json rewrites
+├── auth-guard.simulation.cjs   # headless Node sim of the OSK-74 guard (no browser)
 ├── tests/
 │   ├── smoke.spec.ts      # the static-pages smoke walkthrough
 │   ├── theme.spec.ts      # the default <-> sketch theme-switch walkthrough
+│   ├── auth-guard.spec.ts # OSK-74 /app guard: the graceful "not configured" state
 │   ├── visual.spec.ts     # NIGHTLY-ONLY visual-regression snapshots (both themes)
 │   └── visual.spec.ts-snapshots/   # committed baseline PNGs for the above
 └── README.md              # this file
@@ -71,6 +73,25 @@ Each test attaches a full-page **screenshot** to the report/artifacts.
 Because CI has nothing on the backend port, every live probe fails fast and each page
 must render its graceful `unavailable`/`outage` state — that graceful degradation is
 exactly what the spec proves.
+
+## Auth guard (OSK-74) — spec + headless simulation
+
+The protected `/app` page (`web/app.html`) is guarded by `web/auth.js`. Two things cover
+it without needing a live Firebase sign-in (which requires the human apiKey/appId from
+**OSK-92** and firebase-scoped ADC **OSK-38**, neither available in CI):
+
+- **`tests/auth-guard.spec.ts`** (runs in the fast `chromium` project) — loads `/app` and
+  proves it parses, boots, and lands in the graceful **"auth not configured"** state that
+  the committed empty `apiKey` produces: the notice is shown (and names OSK-92) while the
+  sign-in form and the protected content stay hidden. No network/auth call is made.
+- **`auth-guard.simulation.cjs`** — a zero-dependency Node script that `require()`s the
+  **pure** guard helpers `auth.js` exports (`computeGuardView` / `applyGuardView`) and
+  asserts the show/hide logic across **signed-out**, **signed-in**, **not-configured**,
+  loading and error states — the signed-in path the browser can't reach in CI. Run it
+  with `node auth-guard.simulation.cjs` (exits non-zero on any failure).
+
+When OSK-92 supplies the apiKey/appId, a real **cold-login** walkthrough can drop in as a
+new `tests/*.spec.ts` using this same harness — no infra change.
 
 ## When it runs
 
@@ -152,9 +173,10 @@ add the mapping to `REWRITES` in `static-server.mjs` (mirroring `firebase.json`)
 ### Deferred: the admin-console walkthrough
 
 The OSK-81 ticket's headline walkthrough — **login → users admin console → disable a
-user → see the audit entry** — is intentionally **not** built here. The admin console
-and login UI it needs do **not exist yet** (they are OSK-72 / OSK-74). Faking a
-login/admin flow would test nothing real, so this cut ships the reusable harness plus a
-genuine smoke walkthrough of the pages that exist today. When OSK-72 lands, that
-walkthrough drops in as a new `tests/admin-users.spec.ts` using this same harness — no
-infra change.
+user → see the audit entry** — is intentionally **not** built here. The **login UI** now
+exists (OSK-74, the `/app` guard — see the auth-guard section above), but the **admin
+users console** it drives (OSK-72) does **not** yet, and a real login needs the human
+Firebase apiKey (OSK-92). Faking an admin flow would test nothing real, so this cut ships
+the reusable harness plus genuine smoke walkthroughs of the pages that exist today. When
+OSK-72 lands (and OSK-92 supplies the apiKey), that walkthrough drops in as a new
+`tests/admin-users.spec.ts` using this same harness — no infra change.
