@@ -81,6 +81,17 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
     /** The versioned API surface this filter guards; every other path is left public. */
     static final String PROTECTED_PATH_PREFIX = "/api/v1/";
 
+    /**
+     * Public, pre-login endpoints that live UNDER the protected API surface but must stay
+     * unauthenticated because they are how a signed-out visitor authenticates in the first
+     * place: the passwordless email-code login (OSK-129) start/verify endpoints. They are
+     * exempted here — the single place API auth is decided — rather than moved off
+     * {@code /api/v1} (they belong on the versioned API). They remain covered by the OSK-63
+     * per-IP rate limiter (which filters all {@code /api/**}) plus a per-email throttle in the
+     * service, so making them public does not make them unprotected.
+     */
+    static final String PUBLIC_EMAIL_CODE_PREFIX = "/api/v1/auth/email-code/";
+
     /** Standard bearer-token scheme prefix (note the trailing space) in the {@code Authorization} header. */
     private static final String BEARER_PREFIX = "Bearer ";
 
@@ -133,7 +144,10 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        return path == null || !path.startsWith(PROTECTED_PATH_PREFIX);
+        // Skip anything outside the protected API surface (the public permit-list: health,
+        // actuator, swagger/openapi), AND the explicitly-public pre-login endpoints that live
+        // under it (OSK-129 email-code login) — those must run without a bearer token.
+        return path == null || !path.startsWith(PROTECTED_PATH_PREFIX) || path.startsWith(PUBLIC_EMAIL_CODE_PREFIX);
     }
 
     @Override

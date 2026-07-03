@@ -465,6 +465,39 @@
         <h2 id="signin-heading">Sign in</h2>
         <p class="panel__hint">Sign in to access your account.</p>
 
+        <!--
+          OSK-129: passwordless email-code sign-in — the DEFAULT method. Step 1 collects the
+          email and requests a code (POST /api/v1/auth/email-code/start); step 2 (the code
+          field, revealed once a code has been sent) verifies it (POST .../verify) and then
+          completes sign-in with Firebase signInWithCustomToken. The other methods (password,
+          social, phone) are hidden behind "Try another way" below. The single primary button
+          switches label between "Send code" and "Verify & sign in". Wired by the OSK-129
+          script at the foot; XSS-safe (textContent only).
+        -->
+        <div id="email-code-signin" class="email-code">
+          <form id="email-code-form" novalidate>
+            <label class="field">
+              <span class="field__label">Email</span>
+              <input id="email-code-email" class="field__input" type="email"
+                     autocomplete="email" inputmode="email" required
+                     placeholder="you@example.com" />
+            </label>
+            <label class="field" id="email-code-code-field" hidden>
+              <span class="field__label">6-digit code</span>
+              <input id="email-code-code" class="field__input" type="text"
+                     inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*"
+                     maxlength="6" placeholder="123456" />
+            </label>
+            <button id="email-code-submit" class="btn btn--primary" type="submit">Send code</button>
+            <button id="email-code-restart" class="btn btn--ghost" type="button" hidden>Use a different email</button>
+          </form>
+          <p id="email-code-status" class="panel__hint" role="status" aria-live="polite" hidden></p>
+          <p id="email-code-error" class="form-error" role="alert" hidden></p>
+        </div>
+
+        <!-- Reveal the alternate sign-in methods (password + social + phone). -->
+        <button id="try-another-way" class="btn btn--ghost" type="button">Try another way</button>
+
         <form id="signin-form" novalidate>
           <label class="field">
             <span class="field__label">Email</span>
@@ -519,6 +552,22 @@
             </svg>
             Continue with Apple
           </button>
+        </div>
+
+        <!--
+          OSK-129 / OSK-134: SMS phone sign-in ("try another way"). Config-gated + FLAGGED:
+          the button shows ONLY when window.__APP_CONFIG__.firebase.providers.phone === true,
+          which stays false until a human enables the Firebase Phone provider AND provisions an
+          SMS region/quota (OSK-134/137/143). Until then the note explains it isn't available
+          and NO SMS is ever attempted. The whole block starts hidden (an alternate method
+          revealed by "Try another way"); the OSK-129 script picks the note vs the button.
+        -->
+        <div id="phone-signin" class="providers" hidden>
+          <div class="divider" aria-hidden="true">or</div>
+          <button id="phone-signin-btn" class="btn btn--provider" type="button" hidden>
+            Continue with a phone number
+          </button>
+          <p id="phone-signin-note" class="panel__hint">Phone sign-in isn't enabled yet.</p>
         </div>
 
         <p id="signin-error" class="form-error" role="alert" hidden></p>
@@ -796,6 +845,130 @@
             A.signOut().catch(function () { /* nothing useful to show on sign-out error */ });
           });
         }
+      })();
+    </script>
+
+    <script>
+      // OSK-129 — passwordless email-code sign-in wiring (the DEFAULT method) + the
+      // "Try another way" reveal for the alternate methods (password/social/phone).
+      // Additive + self-contained: it runs after the OSK-74 guard IIFE above, reads
+      // window.OSKAuth (web/auth.js, loaded in <head>), and only toggles `.hidden` /
+      // sets `.textContent` — never innerHTML, so it stays strictly XSS-safe. All the
+      // network + Firebase logic lives in OSKAuth.startEmailCode / verifyEmailCode
+      // (verify completes sign-in via signInWithCustomToken); this script is just DOM.
+      (function () {
+        "use strict";
+
+        var A = window.OSKAuth;
+        if (!A || typeof A.startEmailCode !== "function") { return; }
+
+        var form = document.getElementById("email-code-form");
+        var emailEl = document.getElementById("email-code-email");
+        var codeField = document.getElementById("email-code-code-field");
+        var codeEl = document.getElementById("email-code-code");
+        var submitBtn = document.getElementById("email-code-submit");
+        var restartBtn = document.getElementById("email-code-restart");
+        var statusEl = document.getElementById("email-code-status");
+        var errorEl = document.getElementById("email-code-error");
+        var tryAnother = document.getElementById("try-another-way");
+        if (!form || !emailEl) { return; }
+
+        // The alternate methods, hidden by default so email-code is the DEFAULT. The
+        // first ".divider" is the existing "or" between the password form and social.
+        var altEls = [
+          document.getElementById("signin-form"),
+          document.querySelector("#auth-signin .divider"),
+          document.getElementById("social-providers"),
+          document.getElementById("phone-signin"),
+        ];
+        altEls.forEach(function (el) { if (el) { el.hidden = true; } });
+
+        var step = "email"; // "email" -> collecting address; "code" -> collecting the code
+
+        function setError(msg) {
+          if (errorEl) { errorEl.textContent = msg || ""; errorEl.hidden = !msg; }
+        }
+        function setStatus(msg) {
+          if (statusEl) { statusEl.textContent = msg || ""; statusEl.hidden = !msg; }
+        }
+        function setBusy(busy) {
+          if (submitBtn) { submitBtn.disabled = busy; }
+          if (restartBtn) { restartBtn.disabled = busy; }
+        }
+
+        // Phone "try another way": show the button only when phone auth is enabled in
+        // config (it isn't by default — enabling SMS is a human step), else the note.
+        function updatePhoneAffordance() {
+          var note = document.getElementById("phone-signin-note");
+          var btn = document.getElementById("phone-signin-btn");
+          var enabled = A.isPhoneAuthEnabled();
+          if (note) { note.hidden = enabled; }
+          if (btn) { btn.hidden = !enabled; }
+        }
+        updatePhoneAffordance();
+
+        if (tryAnother) {
+          tryAnother.addEventListener("click", function () {
+            altEls.forEach(function (el) { if (el) { el.hidden = false; } });
+            updatePhoneAffordance();
+            tryAnother.hidden = true;
+          });
+        }
+
+        function toCodeStep() {
+          step = "code";
+          if (codeField) { codeField.hidden = false; }
+          if (submitBtn) { submitBtn.textContent = "Verify & sign in"; }
+          if (restartBtn) { restartBtn.hidden = false; }
+          if (codeEl) { codeEl.focus(); }
+        }
+        function toEmailStep() {
+          step = "email";
+          if (codeField) { codeField.hidden = true; }
+          if (codeEl) { codeEl.value = ""; }
+          if (submitBtn) { submitBtn.textContent = "Send code"; }
+          if (restartBtn) { restartBtn.hidden = true; }
+          setStatus("");
+          setError("");
+          if (emailEl) { emailEl.focus(); }
+        }
+        if (restartBtn) { restartBtn.addEventListener("click", toEmailStep); }
+
+        form.addEventListener("submit", function (ev) {
+          ev.preventDefault();
+          setError("");
+          var email = emailEl.value.trim();
+          if (!A.isLikelyEmail(email)) { setError("Enter a valid email address."); return; }
+
+          if (step === "email") {
+            setBusy(true);
+            setStatus("Sending a code to " + email + "…");
+            A.startEmailCode(email)
+              .then(function () {
+                setStatus("We sent a 6-digit code to " + email + ". Enter it below.");
+                toCodeStep();
+              })
+              .catch(function (err) {
+                setStatus("");
+                setError((err && err.message) || A.describeEmailCodeError(0));
+              })
+              .then(function () { setBusy(false); });
+          } else {
+            var code = codeEl ? codeEl.value.trim() : "";
+            if (!code) { setError("Enter the 6-digit code."); return; }
+            setBusy(true);
+            setStatus("Verifying…");
+            A.verifyEmailCode(email, code)
+              .then(function () {
+                setStatus("Signed in."); // the guard reveals the app via the auth-state change
+              })
+              .catch(function (err) {
+                setStatus("");
+                setError((err && err.message) || A.describeEmailCodeError(0));
+              })
+              .then(function () { setBusy(false); });
+          }
+        });
       })();
     </script>
 

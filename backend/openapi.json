@@ -305,6 +305,23 @@
         },
         "type" : "object"
       },
+      "StartRequest" : {
+        "properties" : {
+          "email" : {
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "StartResponse" : {
+        "properties" : {
+          "status" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "UpdateEnabledRequest" : {
         "properties" : {
           "enabled" : {
@@ -453,6 +470,27 @@
             "type" : "string"
           },
           "role" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "VerifyRequest" : {
+        "properties" : {
+          "code" : {
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "email" : {
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "VerifyResponse" : {
+        "properties" : {
+          "token" : {
             "type" : "string"
           }
         },
@@ -687,6 +725,62 @@
           }
         },
         "tags" : [ "admin-user-controller" ]
+      }
+    },
+    "/api/v1/auth/email-code/start" : {
+      "post" : {
+        "operationId" : "start",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/StartRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/StartResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "email-code-controller" ]
+      }
+    },
+    "/api/v1/auth/email-code/verify" : {
+      "post" : {
+        "operationId" : "verify",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/VerifyResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "email-code-controller" ]
       }
     },
     "/api/v1/info" : {

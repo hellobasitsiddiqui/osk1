@@ -23,8 +23,14 @@ package io.openskeleton.backend.web.ratelimit;
  *
  * <p>The clock is passed in as a nanosecond timestamp ({@code System.nanoTime()} in
  * production) so tests can drive refill deterministically without sleeping.
+ *
+ * <p><b>Reused beyond the request filter:</b> this is the single token-bucket implementation
+ * in the codebase. It is {@code public} so features that need their own throttle can compose
+ * it rather than re-implement the algorithm — the passwordless email-code login (OSK-129)
+ * uses per-email buckets for its start/verify endpoints via
+ * {@code io.openskeleton.backend.login.EmailLoginRateLimiter}.
  */
-final class TokenBucket {
+public final class TokenBucket {
 
     private final long capacity;
 
@@ -43,7 +49,7 @@ final class TokenBucket {
      * @param refillPeriodNanos the refill interval in nanoseconds (must be &gt; 0)
      * @param nowNanos the current {@code nanoTime()} reading used to seed the clock
      */
-    TokenBucket(long capacity, long refillTokens, long refillPeriodNanos, long nowNanos) {
+    public TokenBucket(long capacity, long refillTokens, long refillPeriodNanos, long nowNanos) {
         this.capacity = capacity;
         this.refillTokensPerNano = (double) refillTokens / (double) refillPeriodNanos;
         this.tokens = capacity; // start full so a fresh client gets its whole burst immediately
@@ -59,7 +65,7 @@ final class TokenBucket {
      *     spent), otherwise {@code denied} carrying the {@code retryAfterSeconds} the
      *     caller should wait before the next token becomes available
      */
-    synchronized Decision tryConsume(long nowNanos) {
+    public synchronized Decision tryConsume(long nowNanos) {
         refill(nowNanos);
         if (tokens >= 1.0) {
             tokens -= 1.0;
@@ -94,5 +100,5 @@ final class TokenBucket {
      * @param retryAfterSeconds seconds to wait before retrying — meaningful only when
      *     {@code allowed} is {@code false}; {@code 0} when allowed
      */
-    record Decision(boolean allowed, long retryAfterSeconds) {}
+    public record Decision(boolean allowed, long retryAfterSeconds) {}
 }

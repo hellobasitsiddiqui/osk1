@@ -70,6 +70,22 @@ app:
   # can tune it without a rebuild. Bound + validated via EmailVerificationProperties.
   email-verification:
     resend-cooldown: ${APP_EMAIL_VERIFICATION_RESEND_COOLDOWN:60s}
+  # --- Passwordless email-code login (OSK-129) ---------------------------------
+  # The DEFAULT sign-in method. POST /api/v1/auth/email-code/start issues a short
+  # numeric code (stored hashed with a TTL + attempt cap) and emails it (delivery is
+  # a logging no-op until the Workspace SMTP sender lands — OSK-139); POST
+  # /api/v1/auth/email-code/verify checks it and mints a Firebase custom token. The
+  # code length, TTL and max-attempts are the brute-force defences around a small
+  # numeric space; per-email-* is a token bucket (reusing OSK-63) applied per email
+  # to the start AND verify endpoints, complementing the coarse per-IP limiter. All
+  # env-overridable so ops can tune without a rebuild. Bound via EmailLoginProperties.
+  email-login:
+    code-length: ${APP_EMAIL_LOGIN_CODE_LENGTH:6}
+    ttl: ${APP_EMAIL_LOGIN_TTL:10m}
+    max-attempts: ${APP_EMAIL_LOGIN_MAX_ATTEMPTS:5}
+    per-email-capacity: ${APP_EMAIL_LOGIN_PER_EMAIL_CAPACITY:5}
+    per-email-refill-tokens: ${APP_EMAIL_LOGIN_PER_EMAIL_REFILL_TOKENS:5}
+    per-email-refill-period: ${APP_EMAIL_LOGIN_PER_EMAIL_REFILL_PERIOD:15m}
 
 # --- Actuator (ops surface, OSK-50) --------------------------------------------
 # Expose only health/info/metrics over HTTP. health is public (liveness/readiness
