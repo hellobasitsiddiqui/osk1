@@ -19,7 +19,7 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("OpenSkeleton protected /app auth guard", () => {
-  test("/app boots and shows the graceful 'auth not configured' state (empty apiKey)", async ({
+  test("/app boots and shows the signed-out sign-in state (apiKey wired, OSK-92)", async ({
     page,
   }, testInfo) => {
     // Clean path "/app" — served via the static server's Firebase-style rewrite.
@@ -29,24 +29,19 @@ test.describe("OpenSkeleton protected /app auth guard", () => {
     await expect(page).toHaveTitle("OpenSkeleton Account");
     await expect(page.locator("h1")).toHaveText("OpenSkeleton Account");
 
-    // The guard resolves to the not-configured NOTICE (committed apiKey is empty). The
-    // notice text explains the human gate (OSK-92).
-    const notice = page.locator("#auth-notice");
-    await expect(notice).toBeVisible();
-    await expect(page.locator("#auth-notice-text")).toContainText("not configured");
-    await expect(page.locator("#auth-notice-text")).toContainText("OSK-92");
-
-    // With auth not configured, BOTH the sign-in affordance and the protected content
-    // stay hidden — nothing interactive is offered and no protected data leaks.
-    await expect(page.locator("#auth-signin")).toBeHidden();
+    // Auth is now CONFIGURED (real apiKey wired into config.js, OSK-92). For a signed-out
+    // visitor the guard loads the SDK, onAuthStateChanged reports no user, and it resolves
+    // to the SIGN-IN affordance (auto-waited: SDK load is async). Protected content stays
+    // hidden — no protected data leaks to a signed-out visitor.
+    await expect(page.locator("#auth-signin")).toBeVisible();
     await expect(page.locator("#auth-app")).toBeHidden();
 
-    // Sanity: the auth module loaded and reports "not configured" (no crash, no SDK).
+    // Sanity: the auth module loaded and reports CONFIGURED (apiKey present).
     const configured = await page.evaluate(() => {
       const A = (window as unknown as { OSKAuth?: { isConfigured(): boolean } }).OSKAuth;
       return A ? A.isConfigured() : null;
     });
-    expect(configured).toBe(false);
+    expect(configured).toBe(true);
 
     await testInfo.attach("app-not-configured", {
       body: await page.screenshot({ fullPage: true }),

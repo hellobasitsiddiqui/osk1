@@ -146,5 +146,33 @@ window.__APP_CONFIG__ = {
     storageBucket: "openskeleton-one.firebasestorage.app",
     messagingSenderId: "476227744481",
     appId: "1:476227744481:web:41667628f03355f898fda0",
+
+    // OSK-131: which federated / social sign-in providers the /app sign-in screen
+    // OFFERS. Each toggle is the OPERATOR's confirmation that the provider is actually
+    // ENABLED in the Firebase console (Authentication -> Sign-in method) with its
+    // client ID / secret configured — a HUMAN step that CANNOT be done from code and
+    // whose secrets MUST NOT be committed (they live in the console, never here). A
+    // provider's button renders ONLY when its toggle is true (AND apiKey is present),
+    // so an unconfigured provider never shows a button that would fail with
+    // auth/operation-not-allowed. web/auth.js is the single source of truth for the
+    // gating (oskIsProviderEnabled); the sign-in UI just reflects it.
+    //
+    // Adding a provider later is trivial: add it to the registry in auth.js, add a
+    // <button data-provider> in the sign-in UI, and add a toggle here.
+    //
+    //   google   — enabled in the Firebase console at bring-up (OSK-74); ships ON.
+    //   facebook — HUMAN: create a Facebook app, add its App ID + App Secret under
+    //              Firebase console -> Authentication -> Sign-in method -> Facebook,
+    //              add the OAuth redirect URI it shows to the Facebook app, THEN flip
+    //              this to true.
+    //   apple    — HUMAN: configure Sign in with Apple (Apple Developer: Services ID,
+    //              Team ID, Key ID + private key) under Firebase console -> Sign-in
+    //              method -> Apple, THEN flip this to true.
+    // Omit this block entirely to fall back to "Google only". Unknown keys are ignored.
+    providers: {
+      google: true,
+      facebook: false,
+      apple: false,
+    },
   },
 };

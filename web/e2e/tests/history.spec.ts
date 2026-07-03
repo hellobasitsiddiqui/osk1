@@ -20,7 +20,7 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("OpenSkeleton protected /history view", () => {
-  test("/history boots and shows the graceful 'auth not configured' state (empty apiKey)", async ({
+  test("/history boots and shows the signed-out sign-in state (apiKey wired, OSK-92)", async ({
     page,
   }, testInfo) => {
     // Clean path "/history" — served via the static server's Firebase-style rewrite.
@@ -30,24 +30,18 @@ test.describe("OpenSkeleton protected /history view", () => {
     await expect(page).toHaveTitle("OpenSkeleton Profile History");
     await expect(page.locator("h1")).toHaveText("Profile history");
 
-    // The guard resolves to the not-configured NOTICE (committed apiKey is empty). The
-    // notice text explains the human gate (OSK-92).
-    const notice = page.locator("#auth-notice");
-    await expect(notice).toBeVisible();
-    await expect(page.locator("#auth-notice-text")).toContainText("not configured");
-    await expect(page.locator("#auth-notice-text")).toContainText("OSK-92");
-
-    // With auth not configured, BOTH the sign-in affordance and the protected history
-    // region stay hidden — nothing interactive is offered and no protected data leaks.
-    await expect(page.locator("#auth-signin")).toBeHidden();
+    // Auth is now CONFIGURED (real apiKey wired into config.js, OSK-92). For a signed-out
+    // visitor the guard resolves to the SIGN-IN affordance (auto-waited: SDK load is async),
+    // while the protected history region stays hidden — no protected data leaks.
+    await expect(page.locator("#auth-signin")).toBeVisible();
     await expect(page.locator("#auth-history")).toBeHidden();
 
-    // Sanity: the auth module loaded and reports "not configured" (no crash, no SDK).
+    // Sanity: the auth module loaded and reports CONFIGURED (apiKey present).
     const configured = await page.evaluate(() => {
       const A = (window as unknown as { OSKAuth?: { isConfigured(): boolean } }).OSKAuth;
       return A ? A.isConfigured() : null;
     });
-    expect(configured).toBe(false);
+    expect(configured).toBe(true);
 
     await testInfo.attach("history-not-configured", {
       body: await page.screenshot({ fullPage: true }),

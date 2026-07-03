@@ -158,6 +158,173 @@ function oskApplyGuardView(view, els) {
   if (e.noticeText) { e.noticeText.textContent = v.noticeText || ""; }
 }
 
+// ===========================================================================
+// FEDERATED / SOCIAL SIGN-IN PROVIDERS (OSK-131)
+// Google (OSK-74) plus Facebook and Apple, structured so adding a fourth is
+// trivial: one entry in the registry below, one <button data-provider> in the
+// sign-in UI, and one config toggle. Everything here is PURE (no globals, no
+// network, no Firebase) — the actual provider OBJECTS are built in the browser
+// bootstrap where the SDK exists. Keeping the metadata + gating pure is what lets
+// web/e2e/social-login.simulation.cjs assert config-gating and error mapping with
+// zero browser.
+// ===========================================================================
+
+// The registry of federated providers the web app KNOWS how to offer. PURE
+// metadata only:
+//   id    — the stable key used in config toggles, `data-provider`, and
+//           signInWithProvider(id). Lower-case, matches the Firebase provider id
+//           where one exists (google.com / facebook.com / apple.com).
+//   label — the human name rendered on the button ("Continue with <label>").
+// Order here is the order buttons render in. Google is first because it is the
+// provider wired at bring-up (OSK-74).
+var OSK_AUTH_PROVIDERS = [
+  { id: "google", label: "Google" },
+  { id: "facebook", label: "Facebook" },
+  { id: "apple", label: "Apple" },
+];
+
+// Look up a provider descriptor by id (case-insensitive, whitespace-tolerant).
+// Returns the descriptor object, or null for an unknown id — callers use null to
+// refuse to render / build an unknown provider (never a broken button).
+function oskFindProvider(id) {
+  if (typeof id !== "string") { return null; }
+  var key = id.trim().toLowerCase();
+  for (var i = 0; i < OSK_AUTH_PROVIDERS.length; i++) {
+    if (OSK_AUTH_PROVIDERS[i].id === key) { return OSK_AUTH_PROVIDERS[i]; }
+  }
+  return null;
+}
+
+// Is a given federated provider ENABLED for this config? BOTH gates must hold:
+//   1) auth is configured at all (a real apiKey — the OSK-92 gate), AND
+//   2) the provider is switched on in config.firebase.providers.
+// The `providers` map is OPTIONAL and defensive:
+//   - when the map (or the specific key) is ABSENT, Google defaults ON (it is the
+//     provider enabled in the Firebase console at bring-up, OSK-74) and every
+//     other provider defaults OFF — because enabling Facebook/Apple needs a HUMAN
+//     Firebase-console step (client IDs/secrets) that cannot be done from code;
+//   - a toggle is honoured ONLY when strictly === true, so a truthy-but-wrong
+//     value (1, "yes") never accidentally shows a button that would fail;
+//   - a toggle for an id NOT in the registry is ignored by callers via
+//     oskFindProvider, so a typo can never render a broken button.
+// This is the single source of truth for "should this provider's button show?".
+function oskIsProviderEnabled(firebaseCfg, id) {
+  if (!oskIsFirebaseConfigured(firebaseCfg)) { return false; }
+  var desc = oskFindProvider(id);
+  if (!desc) { return false; }
+  var providers = firebaseCfg && firebaseCfg.providers;
+  if (providers && typeof providers === "object" && desc.id in providers) {
+    return providers[desc.id] === true;
+  }
+  // No explicit toggle for this provider: Google on by default, others off.
+  return desc.id === "google";
+}
+
+// The ordered list of ENABLED provider descriptors for a config — exactly the
+// buttons the sign-in UI should offer. Pure, so the sim asserts the gating.
+function oskEnabledProviders(firebaseCfg) {
+  var out = [];
+  for (var i = 0; i < OSK_AUTH_PROVIDERS.length; i++) {
+    if (oskIsProviderEnabled(firebaseCfg, OSK_AUTH_PROVIDERS[i].id)) {
+      out.push(OSK_AUTH_PROVIDERS[i]);
+    }
+  }
+  return out;
+}
+
+// Show only the ENABLED providers' buttons. `buttonsById` maps provider id ->
+// a DOM-ish element (the sign-in UI's static <button data-provider> nodes). Sets
+// each element's `.hidden` (true = hidden) and returns the count shown. Duck-typed
+// — it only touches `.hidden` — so the Node sim passes plain `{ hidden: bool }`
+// stand-ins and asserts the result with no jsdom. Missing elements are skipped
+// (a page may not render every provider), so partial maps are safe.
+function oskApplyProviderVisibility(firebaseCfg, buttonsById) {
+  var b = buttonsById || {};
+  var shown = 0;
+  for (var i = 0; i < OSK_AUTH_PROVIDERS.length; i++) {
+    var id = OSK_AUTH_PROVIDERS[i].id;
+    var el = b[id];
+    if (!el) { continue; }
+    var on = oskIsProviderEnabled(firebaseCfg, id);
+    el.hidden = !on;
+    if (on) { shown++; }
+  }
+  return shown;
+}
+
+// Map a Firebase Auth failure (or any thrown value) to a SHORT, user-facing
+// message. Centralised so every provider button AND the email/password form
+// surface the same friendly copy for the same failure. It recognises the codes
+// the popup/OAuth flow actually produces — including the two the ticket calls out
+// (account-exists-with-different-credential, popup-closed-by-user) — and falls
+// back to the raw message (or a generic line) for anything unrecognised. PURE, so
+// the sim asserts the mapping directly. `providerLabel` personalises the copy
+// (e.g. "Apple sign-in isn't enabled…"); it defaults sensibly when omitted.
+function oskDescribeAuthError(err, providerLabel) {
+  var who = providerLabel ? providerLabel : "That provider";
+  var code = err && err.code ? String(err.code) : "";
+  switch (code) {
+    case "auth/account-exists-with-different-credential":
+      return (
+        "You already have an account with this email using a different sign-in " +
+        "method. Sign in the way you did originally, then link " + who +
+        " from your account settings."
+      );
+    case "auth/popup-closed-by-user":
+      return "Sign-in was cancelled — the popup was closed before it finished.";
+    case "auth/cancelled-popup-request":
+      return "Only one sign-in popup can be open at a time. Try again.";
+    case "auth/popup-blocked":
+      return "Your browser blocked the sign-in popup. Allow popups for this site and try again.";
+    case "auth/operation-not-allowed":
+      return who + " sign-in isn't enabled for this project yet.";
+    case "auth/unauthorized-domain":
+      return "This site isn't an authorised domain for sign-in (add it in the Firebase console).";
+    case "auth/network-request-failed":
+      return "A network error interrupted sign-in. Check your connection and try again.";
+    default:
+      return err && err.message ? String(err.message) : who + " sign-in failed.";
+  }
+}
+
+// Build the modular Firebase provider OBJECT for a given id, using a SUPPLIED
+// Firebase-auth namespace (`authNs`). In the browser this is the real firebase-auth
+// module; in the Node sim it is a STUB — which is the whole point: this function is
+// pure w.r.t. globals (it reads only its arguments), so the sim exercises the EXACT
+// construction the browser runs, with no SDK and no network.
+//   - Google / Facebook have dedicated provider classes.
+//   - Apple — and any future OIDC/OAuth provider — uses the generic OAuthProvider
+//     keyed by its well-known id ("apple.com").
+// Requested scopes (email, and name for Apple) mirror what the app wants back.
+// Returns null for an unknown id (so the caller refuses rather than popping a broken
+// flow) or when `authNs` is absent.
+function oskBuildProviderWith(authNs, id) {
+  if (!authNs) { return null; }
+  var desc = oskFindProvider(id);
+  if (!desc) { return null; }
+  switch (desc.id) {
+    case "google":
+      return new authNs.GoogleAuthProvider();
+    case "facebook": {
+      var fb = new authNs.FacebookAuthProvider();
+      if (fb && typeof fb.addScope === "function") { fb.addScope("email"); }
+      return fb;
+    }
+    case "apple": {
+      // Apple only returns name/email on the FIRST consent, so the backend must
+      // persist them then — request both here.
+      var ap = new authNs.OAuthProvider("apple.com");
+      if (ap && typeof ap.addScope === "function") {
+        ap.addScope("email");
+        ap.addScope("name");
+      }
+      return ap;
+    }
+    default:
+      return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Node export. When this file is `require()`d (CommonJS), expose the pure helpers
 // so the guard logic can be simulated without a browser. `typeof module` is
@@ -169,6 +336,14 @@ if (typeof module !== "undefined" && module.exports) {
     isFirebaseConfigured: oskIsFirebaseConfigured,
     computeGuardView: oskComputeGuardView,
     applyGuardView: oskApplyGuardView,
+    // OSK-131 — federated / social providers (pure helpers).
+    AUTH_PROVIDERS: OSK_AUTH_PROVIDERS,
+    findProvider: oskFindProvider,
+    isProviderEnabled: oskIsProviderEnabled,
+    enabledProviders: oskEnabledProviders,
+    applyProviderVisibility: oskApplyProviderVisibility,
+    describeAuthError: oskDescribeAuthError,
+    buildProviderWith: oskBuildProviderWith,
   };
 }
 
@@ -305,6 +480,34 @@ if (typeof window !== "undefined") {
       });
     }
 
+    // OSK-131: GENERIC federated sign-in via popup for any KNOWN + ENABLED provider
+    // id ("google" | "facebook" | "apple" | …). This is the single entry point the
+    // sign-in UI calls with a button's `data-provider`. It rejects with a clear error
+    // when auth isn't configured, the id is unknown, the provider isn't enabled in
+    // config, or the SDK failed to load — so the UI can surface a friendly message via
+    // OSKAuth.describeAuthError. On success it resolves with the Firebase user. The
+    // provider object is built by the pure oskBuildProviderWith (shared with the sim).
+    function signInWithProvider(id) {
+      return ensureLoaded().then(function () {
+        if (!auth || !authMod) { throw new Error("Auth is not configured."); }
+        var desc = oskFindProvider(id);
+        if (!desc) { throw new Error("Unknown sign-in provider: " + id); }
+        if (!oskIsProviderEnabled(cfg, desc.id)) {
+          throw new Error(desc.label + " sign-in is not enabled.");
+        }
+        var provider = oskBuildProviderWith(authMod, desc.id);
+        if (!provider) { throw new Error("Unknown sign-in provider: " + id); }
+        return authMod
+          .signInWithPopup(auth, provider)
+          .then(function (cred) { return cred.user; });
+      });
+    }
+
+    // OSK-131: thin named wrappers (parallel to signInWithGoogle) so callers can be
+    // explicit if they prefer. All three converge on the same popup path.
+    function signInWithFacebook() { return signInWithProvider("facebook"); }
+    function signInWithApple() { return signInWithProvider("apple"); }
+
     // Sign out. Resolves harmlessly (no-op) if auth was never configured/loaded.
     function signOut() {
       return ensureLoaded().then(function () {
@@ -361,8 +564,24 @@ if (typeof window !== "undefined") {
       onAuthStateChanged: onAuthStateChanged,
       signInWithEmailPassword: signInWithEmailPassword,
       signInWithGoogle: signInWithGoogle,
+      // OSK-131 — additional federated providers. `signInWithProvider(id)` is the
+      // generic path the sign-in UI uses; the named wrappers are conveniences.
+      signInWithFacebook: signInWithFacebook,
+      signInWithApple: signInWithApple,
+      signInWithProvider: signInWithProvider,
       signOut: signOut,
       getIdToken: getIdToken,
+
+      // OSK-131 — provider config helpers, bound to THIS page's firebase config so the
+      // sign-in UI can gate + render buttons without re-reading config. Same pure
+      // functions the Node sim asserts (see the module.exports above).
+      AUTH_PROVIDERS: OSK_AUTH_PROVIDERS,
+      enabledProviders: function () { return oskEnabledProviders(cfg); },
+      isProviderEnabled: function (id) { return oskIsProviderEnabled(cfg, id); },
+      applyProviderVisibility: function (buttonsById) {
+        return oskApplyProviderVisibility(cfg, buttonsById);
+      },
+      describeAuthError: oskDescribeAuthError,
 
       // Pure guard helpers, re-exposed so the protected page's inline script can render
       // without duplicating the decision logic (same functions the Node sim asserts).
