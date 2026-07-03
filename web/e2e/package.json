@@ -1,0 +1,17 @@
+{
+  "name": "openskeleton-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Browser end-to-end harness (Playwright) for the OpenSkeleton static web pages — OSK-81.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report",
+    "serve": "node static-server.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}
