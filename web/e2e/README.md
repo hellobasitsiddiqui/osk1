@@ -19,10 +19,12 @@ web/e2e/
 ├── playwright.config.ts   # headless Chromium; boots the static server; baseURL; projects
 ├── static-server.mjs      # zero-dep static server, mirrors firebase.json rewrites
 ├── auth-guard.simulation.cjs   # headless Node sim of the OSK-74 guard (no browser)
+├── history.simulation.cjs      # headless Node sim of the OSK-101 profile-history view
 ├── tests/
 │   ├── smoke.spec.ts      # the static-pages smoke walkthrough
 │   ├── theme.spec.ts      # the default <-> sketch theme-switch walkthrough
 │   ├── auth-guard.spec.ts # OSK-74 /app guard: the graceful "not configured" state
+│   ├── history.spec.ts    # OSK-101 /history view: the graceful "not configured" state
 │   ├── visual.spec.ts     # NIGHTLY-ONLY visual-regression snapshots (both themes)
 │   └── visual.spec.ts-snapshots/   # committed baseline PNGs for the above
 └── README.md              # this file
@@ -112,6 +114,23 @@ request logic is **pure** and `admin.js` exports it, so it is covered headlessly
 
 When OSK-92 + an ADMIN test user are available, a real admin walkthrough can drop in as a
 new `tests/*.spec.ts` using this same harness — no infra change.
+
+## Profile history (OSK-101) — spec + headless simulation
+
+The protected `/history` page (`web/history.html` + `web/history.js`) reuses the same
+OSK-74 guard and calls `GET /api/v1/me/history`. It's covered the same two ways, again
+without a live sign-in:
+
+- **`tests/history.spec.ts`** (fast `chromium` project) — loads `/history` and proves it
+  parses, boots, and lands in the graceful **"auth not configured"** state (notice shown +
+  names OSK-92; sign-in form and the history region hidden). No network/auth call is made.
+- **`history.simulation.cjs`** — a zero-dependency Node script that `require()`s the
+  **pure** helpers `history.js` exports and asserts field/value/timestamp formatting, the
+  **newest-first** ordering, the **empty state**, the **401** / HTTP-error / offline panel
+  states, and that `fetchHistory` sends the right `Authorization: Bearer` header — the
+  signed-in fetch/render path the browser can't reach in CI. It renders into a fake DOM and
+  uses a stubbed `fetch`. Run it with `node history.simulation.cjs` (exits non-zero on any
+  failure).
 
 ## When it runs
 

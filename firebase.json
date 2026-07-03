@@ -33,6 +33,10 @@
         "destination": "/admin.html"
       },
       {
+        "source": "/history",
+        "destination": "/history.html"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
