@@ -184,6 +184,20 @@
         "required" : [ "platform" ],
         "type" : "object"
       },
+      "ResendVerificationResponse" : {
+        "properties" : {
+          "email" : {
+            "type" : "string"
+          },
+          "emailVerified" : {
+            "type" : "boolean"
+          },
+          "verificationSent" : {
+            "type" : "boolean"
+          }
+        },
+        "type" : "object"
+      },
       "UpdateEnabledRequest" : {
         "properties" : {
           "enabled" : {
@@ -528,6 +542,24 @@
           }
         },
         "tags" : [ "device-controller" ]
+      }
+    },
+    "/api/v1/me/email/resend-verification" : {
+      "post" : {
+        "operationId" : "resendVerification",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ResendVerificationResponse"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "email-verification-controller" ]
       }
     },
     "/api/v1/me/history" : {

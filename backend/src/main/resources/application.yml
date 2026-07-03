@@ -62,6 +62,14 @@ app:
     default-page-size: ${APP_PAGINATION_DEFAULT_PAGE_SIZE:20}
     default-sort-property: ${APP_PAGINATION_DEFAULT_SORT_PROPERTY:id}
     default-sort-direction: ${APP_PAGINATION_DEFAULT_SORT_DIRECTION:ASC}
+  # --- Email verification resend (OSK-77) --------------------------------------
+  # POST /api/v1/me/email/resend-verification mints a Firebase verification link and
+  # dispatches it (delivery seam is a logging stub until the Workspace SMTP sender
+  # lands — OSK-139). resend-cooldown is the minimum interval between two successful
+  # resends per user; a rapid repeat gets 429 + Retry-After. Env-overridable so ops
+  # can tune it without a rebuild. Bound + validated via EmailVerificationProperties.
+  email-verification:
+    resend-cooldown: ${APP_EMAIL_VERIFICATION_RESEND_COOLDOWN:60s}
 
 # --- Actuator (ops surface, OSK-50) --------------------------------------------
 # Expose only health/info/metrics over HTTP. health is public (liveness/readiness

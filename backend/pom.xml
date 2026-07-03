@@ -245,6 +245,13 @@
 						     logic in PushNotificationService IS unit-tested with a mocked
 						     FirebaseMessaging. -->
 						<exclude>**/push/PushConfig.class</exclude>
+						<!-- FirebaseAdminConfig (OSK-77) is the thin factory that stands up
+						     the Firebase Admin auth client from ADC — same untestable-without-
+						     live-credentials shape as FirebaseTokenVerifier above. The actual
+						     resend logic (EmailVerificationService, ResendCooldown, the
+						     controller) is fully unit-tested with a mocked FirebaseAuth; only
+						     this ADC-init factory is excluded. -->
+						<exclude>**/email/FirebaseAdminConfig.class</exclude>
 					</excludes>
 				</configuration>
 				<executions>
