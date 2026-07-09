@@ -105,7 +105,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # The emulator needs hardware acceleration; on ubuntu-latest that is KVM.
       # Grant the runner user access to /dev/kvm so the emulator boots fast enough
@@ -120,7 +120,7 @@ jobs:
       # JDK 21 — required by Capacitor 8 (capacitor-android is compiled with
       # --release 21). Matches android.yml / ci.yml.
       - name: Set up JDK 21 (Temurin)
-        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
         with:
           distribution: temurin
           java-version: '21'
@@ -128,7 +128,7 @@ jobs:
       # Node 22 — the Capacitor 8 CLI needs >=22, and the CDP driver relies on the
       # global WebSocket that is stable in Node 22. One toolchain for both.
       - name: Set up Node 22
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '22'
           cache: npm
@@ -170,7 +170,7 @@ jobs:
       #   - Headless + no snapshot + no boot-anim + swiftshader keeps it lean and
       #     deterministic on a CI runner with no GPU.
       - name: Run emulator e2e flow
-        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         # Pass the harvest dir + CDP port through to the flow explicitly. These also
         # come from the job-level `env:`, but restating them on the step makes the
         # script's inputs self-evident and independent of job-wide env.
@@ -202,7 +202,7 @@ jobs:
       # `if: always()` so evidence survives even when the flow fails.
       - name: Upload screenshot 01 (boot / splash)
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.4.3
         with:
           name: screenshot-01-boot-splash
           path: ${{ env.SCREENSHOT_DIR }}/01-boot-splash.png
@@ -211,7 +211,7 @@ jobs:
 
       - name: Upload screenshot 02 (WebView home UI)
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.4.3
         with:
           name: screenshot-02-webview-home
           path: ${{ env.SCREENSHOT_DIR }}/02-webview-home.png
@@ -220,7 +220,7 @@ jobs:
 
       - name: Upload screenshot 03 (signed-out sign-in screen)
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.4.3
         with:
           name: screenshot-03-signin-signed-out
           path: ${{ env.SCREENSHOT_DIR }}/03-signin-signed-out.png
@@ -229,7 +229,7 @@ jobs:
 
       - name: Upload all screenshots (combined bundle, incl. failure diagnostics)
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.4.3
         with:
           name: mobile-e2e-screenshots
           path: ${{ env.SCREENSHOT_DIR }}
