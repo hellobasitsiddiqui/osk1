@@ -75,20 +75,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # JDK 21 — required by Capacitor 8: its `capacitor-android` library is
       # compiled with `--release 21`, so a JDK 17 toolchain fails with
       # "invalid source release: 21". 21 also matches the backend CI (ci.yml).
       - name: Set up JDK 21 (Temurin)
-        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: '21'
 
       # Node 22 — the Capacitor 8 CLI aborts on Node 20, so pin the >=22 floor.
       - name: Set up Node 22
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: npm
@@ -96,7 +96,7 @@ jobs:
 
       # Install Android cmdline-tools + platform-tools and accept SDK licenses.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
 
       # Install exactly the SDK components the generated project resolves against
       # (see android/variables.gradle: compileSdk/targetSdk 36; AGP 8.13 default
@@ -124,7 +124,7 @@ jobs:
       # Publish the APK so reviewers can download/sideload it from the run.
       # Not a release artifact — unsigned debug only.
       - name: Upload debug APK
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.4.3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.4.3
         with:
           name: app-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
